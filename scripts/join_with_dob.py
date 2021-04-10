@@ -9,6 +9,7 @@ from typing import Optional, List
 DOB_CODE = "P569"
 OCCUPATION_CODE = "P106"
 
+
 def join_with_dob(args: argparse.Namespace):
     data_dir = Path(args.data_dir)
     for f in sorted(data_dir.glob("x??.csv")):
@@ -22,8 +23,8 @@ def join_with_dob(args: argparse.Namespace):
                         continue
             f.unlink()
 
-class UniqueDict(dict):
 
+class UniqueDict(dict):
     def __init__(self):
         super().__init__()
         self._set = set()
@@ -67,7 +68,9 @@ def shorten_date(val: str, min_year: Optional[int], max_year: Optional[int]) -> 
     m = re.match("([0-9][0-9][0-9][0-9])-[0-1][0-9]-[0-3][0-9]")
     if m:
         year = m.group(1)
-        if (min_year is None or year >= min_year) and (max_year is None or year <= max_year):
+        if (min_year is None or year >= min_year) and (
+            max_year is None or year <= max_year
+        ):
             return val
     return None
 
@@ -83,5 +86,5 @@ def main(args: Optional[List[str]] = None):
     join_with_dob(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
