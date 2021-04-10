@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import argparse
 import csv
 import glob
 import math
@@ -7,10 +7,11 @@ import sys
 from random import random
 import numpy as np
 import swisseph as swe
+import roc_sd
 
 swe.set_ephe_path("/home/dmc/astrolog/astephem")
 
-"""
+PLANET_STR = """
 0 Sun
 1 Moon
 2 Mercury
@@ -30,8 +31,13 @@ swe.set_ephe_path("/home/dmc/astrolog/astephem")
 20 Vesta
 """
 
-PLANETS = [0, 1, 2, 3, 4, 5, 6]  # ,7,8,9,11,15,16,17,18,19,20]
+PLANETS = []
+for line in PLANET_STR.split("\n"):
+    toks = line.split()
+    if len(toks) >= 2:
+        PLANETS.append(int(toks[0]))
 
+ROC_SD = {}
 
 def get_dates(f):
     dates = []
@@ -46,52 +52,68 @@ def get_dates(f):
     return dates
 
 
-def compare_files(f1, f2):
-    dates1 = get_dates(f1)
-    dates2 = get_dates(f2)
+def compare_files(f1, dates1, f2, dates2, max_planet: int, degree_step: int, max_harmonic: int):
     if not (dates1 and dates2):
-        return True
-    if len(dates1) > 2 * len(dates2) or len(dates2) > 2 * len(dates1):
-        return False
+        return
     for p in PLANETS:
-        rads1 = [swe.calc(date, p)[0][0] / (2 * math.pi) for date in dates1]
-        rads2 = [swe.calc(date, p)[0][0] / (2 * math.pi) for date in dates2]
-        for h in range(1, 7):
-            for d in range(
-                0, 180, 15
-            ):  # don't need full circle because cos is antisymmetric
-                dr = d / (2 * math.pi)
-                pairs1 = [
-                    (math.cos(h * rad + dr) + 0.00001 * random(), 1) for rad in rads1
-                ]
-                pairs2 = [
-                    (math.cos(h * rad + dr) + 0.00001 * random(), 2) for rad in rads2
-                ]
-                order = [c for (_, c) in sorted(pairs1 + pairs2)]
+        if p > max_planet:
+            break
+        rads1 = radian_positions(dates1, p)
+        rads2 = radian_positions(dates2, p)
+        len_tuple = tuple(sorted([len(rads1), len(rads2)]))
+        if len_tuple not in ROC_SD:
+            ROC_SD[len_tuple] = roc_sd.roc_sd(*len_tuple, extra_samples=1000000)[0]
+        null_sd = ROC_SD[len_tuple]
+        denom = len(rads1) * len(rads2)
+        for h in range(1, max_harmonic + 1):
+            for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
+                dr = d * math.pi / 180
+                pairs1 = cosine_pairs(dr, h, rads1, 1)
+                pairs2 = cosine_pairs(dr, h, rads2, 2)
                 n1 = 0
                 n12 = 0
-                for c in order:
+                for _, c in sorted(pairs1 + pairs2):
                     if c == 1:
                         n1 += 1
                     else:
                         n12 += n1
-                roc = n12 / (n1 * (len(order) - n1))
+                roc = n12 / denom
+                z = (roc - 0.5) / null_sd
                 print(
-                    f"{h} {p:2d} {d:3d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} "
+                    f"{z:9.6f} {h:2d} {p:2d} {d:3d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
                 )
                 sys.stdout.flush()
     return True
 
 
+def cosine_pairs(dr, h, rads, idx):
+    return [(math.cos(h * rad + dr) + 0.00001 * random(), idx) for rad in rads]
+
+
+def radian_positions(dates1, p):
+    return [swe.calc(date, p)[0][0] / (2 * math.pi) for date in dates1]
+
+
+def size_ratio_ok(sz1: int, sz2: int, max_size_ratio: float) -> bool:
+    return sz1 * max_size_ratio >= sz2 and sz2 * max_size_ratio >= sz1
+
+
 def main():
-    files = sys.argv[1:]  # assume longest first or sorted(glob.glob("*.csv"))
-    is_first = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max_size_ratio", type=float, default=2.0)
+    parser.add_argument("--max_planet", type=int, default=9)
+    parser.add_argument("--max_harmonic", type=int, default=6)
+    parser.add_argument("--degree_step", type=int, default=15)
+    parser.add_argument("files", nargs="*")
+    args = parser.parse_args()
+    files = args.files
+    dates = {}
+    for f in files:
+        dates[f] = get_dates(f)
     for i, f1 in enumerate(files):
         for f2 in files[i + 1 :]:
-            if is_first:
-                is_first = False  # don't repeat
-            elif not compare_files(f1, f2):
-                break
+            if size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
+                compare_files(f1, dates[f1], f2, dates[f2], args.max_planet, args.degree_step, args.max_harmonic)
 
 
 if __name__ == "__main__":
