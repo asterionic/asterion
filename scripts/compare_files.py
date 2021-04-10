@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 import argparse
 import csv
-import glob
 import math
 import sys
 from random import random
@@ -55,11 +54,15 @@ def get_dates(f):
 def compare_files(f1, dates1, f2, dates2, max_planet: int, degree_step: int, max_harmonic: int):
     if not (dates1 and dates2):
         return
-    for p in PLANETS:
-        if p > max_planet:
-            break
-        rads1 = radian_positions(dates1, p)
-        rads2 = radian_positions(dates2, p)
+    rads1_dct = {}
+    rads2_dct = {}
+    planets_to_use = [p for p in PLANETS if p <= max_planet]
+    for p in planets_to_use:
+        rads1_dct[p] = radian_positions(dates1, p)
+        rads2_dct[p] = radian_positions(dates2, p)
+    for p in planets_to_use:
+        rads1 = rads1_dct[p]
+        rads2 = rads2_dct[p]
         len_tuple = tuple(sorted([len(rads1), len(rads2)]))
         if len_tuple not in ROC_SD:
             ROC_SD[len_tuple] = roc_sd.roc_sd(*len_tuple, extra_samples=1000000)[0]
@@ -68,22 +71,39 @@ def compare_files(f1, dates1, f2, dates2, max_planet: int, degree_step: int, max
         for h in range(1, max_harmonic + 1):
             for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
                 dr = d * math.pi / 180
-                pairs1 = cosine_pairs(dr, h, rads1, 1)
-                pairs2 = cosine_pairs(dr, h, rads2, 2)
-                n1 = 0
-                n12 = 0
-                for _, c in sorted(pairs1 + pairs2):
-                    if c == 1:
-                        n1 += 1
-                    else:
-                        n12 += n1
-                roc = n12 / denom
+                roc = calculate_roc(denom, dr, h, rads1, rads2)
                 z = (roc - 0.5) / null_sd
                 print(
-                    f"{z:9.6f} {h:2d} {p:2d} {d:3d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
+                    f"{z:9.6f} {h:2d} {p:2d} {-d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
                 )
                 sys.stdout.flush()
+            for p2 in planets_to_use:
+                if p2 <= p:
+                    continue
+                rads1_diff = rads1 - rads1_dct[p2]
+                rads2_diff = rads2 - rads2_dct[p2]
+                roc = calculate_roc(denom, 0.0, h, rads1_diff, rads2_diff)
+                z = (roc - 0.5) / null_sd
+                print(
+                    f"{z:9.6f} {h:2d} {p:2d} {p2:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
+                )
+
     return True
+
+
+def calculate_roc(denom, dr, h, rads1, rads2):
+    pairs1 = cosine_pairs(dr, h, rads1, 1)
+    pairs2 = cosine_pairs(dr, h, rads2, 2)
+    n1 = 0
+    n12 = 0
+    for _, c in sorted(pairs1 + pairs2):
+        if c == 1:
+            n1 += 1
+        else:
+            n12 += n1
+    roc1 = n12 / denom
+    roc = roc1
+    return roc
 
 
 def cosine_pairs(dr, h, rads, idx):
@@ -91,7 +111,7 @@ def cosine_pairs(dr, h, rads, idx):
 
 
 def radian_positions(dates1, p):
-    return [swe.calc(date, p)[0][0] / (2 * math.pi) for date in dates1]
+    return np.array([swe.calc(date, p)[0][0] * math.pi / 180 for date in dates1])
 
 
 def size_ratio_ok(sz1: int, sz2: int, max_size_ratio: float) -> bool:
