@@ -242,6 +242,10 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     ]
     planets_to_use2 = [p for p in PLANETS if p <= max_planet]
     dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
+    if args.shuffle:
+        dates12 = np.concatenate([dates1, dates2])
+        shuffle(dates12)
+        dates1, dates2 = dates12[:len(dates1)], dates12[len(dates1):]
     if min(len(dates1), len(dates2)) < args.min_dataset_size:
         return
     for h in range(min_harmonic, max_harmonic + 1):
@@ -257,7 +261,6 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                 ROC_SD[len_tuple] = roc_sd.roc_sd(*len_tuple, extra_samples=1000000)[0]
                 print(f"# null_sd{len_tuple} = {ROC_SD[len_tuple]:8.6f}")
             null_sd = ROC_SD[len_tuple]
-
             sys.stdout.flush()
             denom = len(rads1) * len(rads2)
             for p2 in planets_to_use2:
@@ -271,6 +274,8 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                     # print(f"# Calculated positions for planet {p2}")
                 rads1_diff = rads1 - rads1_dct[p2]
                 rads2_diff = rads2 - rads2_dct[p2]
+                # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
+                # p_values = scipy.stats.norm.sf(abs(z_scores))*2 #twosided
                 roc = calculate_roc(denom, 0.0, h, rads1_diff, rads2_diff)
                 z = (roc - 0.5) / null_sd
                 print(
@@ -317,6 +322,33 @@ def size_ratio_ok(sz1: int, sz2: int, max_size_ratio: float) -> bool:
 
 
 def main():
+    args = parse_arguments()
+    files = args.files
+    dates = {}
+    for f in files:
+        dates[f] = get_dates(f)
+    files = sorted(files, key=lambda f: -len(dates[f]))
+    for delta1 in range(1, len(files)):
+        if args.pairs_first and delta1 < 3:
+            delta = 3 - delta1
+        else:
+            delta = delta1
+        for i, f1 in enumerate(files):
+            print(f"# delta = {delta}, i = {i}")
+            if i + delta >= len(files):
+                break
+            f2 = files[i + delta]
+            if size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
+                compare_files(
+                    args,
+                    os.path.basename(f1),
+                    dates[f1],
+                    os.path.basename(f2),
+                    dates[f2],
+                )
+
+
+def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_size_ratio", type=float, default=5.0)
     parser.add_argument("--max_planet", type=int, default=20)
@@ -330,32 +362,10 @@ def main():
     parser.add_argument("--min_dataset_size", type=int, default=100)
     parser.add_argument("--pairs_first", action="store_true", default=False)
     parser.add_argument("--strict", action="store_true", default=False)
+    parser.add_argument("--shuffle", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
-    files = args.files
-    dates = {}
-    for f in files:
-        dates[f] = get_dates(f)
-    files = sorted(files, key=lambda f: -len(dates[f]))
-    for delta1 in range(1, len(files)):
-        if args.pairs_first and delta1 < 3:
-            delta = 2 - delta1
-        else:
-            delta = delta1
-        for i, f1 in enumerate(files):
-            print(f"# delta = {delta}, i = {i}")
-            if i + delta >= len(files):
-                break
-            f2 = files[i + delta]
-            if not size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
-                break
-            compare_files(
-                args,
-                os.path.basename(f1),
-                dates[f1],
-                os.path.basename(f2),
-                dates[f2],
-            )
+    return args
 
 
 if __name__ == "__main__":
