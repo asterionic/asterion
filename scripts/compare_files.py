@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 import argparse
+import collections
 import csv
 import math
 import os
 import sys
-from random import random
+from random import random, shuffle
+from typing import Tuple
 
 import numpy as np
 import swisseph as swe
@@ -157,6 +159,74 @@ def get_dates(f):
     return dates
 
 
+def year_buckets(dates, bucket_size_in_years):
+    days_in_year = 365.2422
+    zero_date = swe.julday(1900, 1, 1)
+    buckets = collections.defaultdict(list)
+    for date in dates:
+        diff = (date - zero_date) / (bucket_size_in_years * days_in_year)
+        if diff < 0:
+            bucket = -(int(-diff) + 1)
+        else:
+            bucket = int(diff)
+        buckets[bucket].append(date)
+    return buckets
+
+
+def month_buckets(dates, bucket_size_in_months):
+    days_in_year = 365.2422
+    zero_date = swe.julday(1900, 1, 1)
+    buckets = collections.defaultdict(list)
+    for date in dates:
+        year_fraction = (date - zero_date) / days_in_year
+        bucket = int(year_fraction * 12 / bucket_size_in_months)
+        buckets[bucket].append(date)
+    return buckets
+
+
+def match_by_time_buckets(dates1: np.ndarray, dates2: np.ndarray,
+                          bucket_years: float, bucket_months: int) -> Tuple[np.ndarray, np.ndarray]:
+    if bucket_years > 0:
+        len1, len2 = len(dates1), len(dates2)
+        buckets1 = year_buckets(dates1, bucket_years)
+        buckets2 = year_buckets(dates2, bucket_years)
+        dates1, dates2 = apply_buckets(buckets1, buckets2, len1, len2)
+        print(f"# With bucket_years  = {bucket_years:2d}, "
+              f"reduced counts from {len1:6d} and {len2:6d} to {len(dates1):6d} and {len(dates2):6d}")
+    if bucket_months > 0:
+        len1, len2 = len(dates1), len(dates2)
+        buckets1 = month_buckets(dates1, bucket_months)
+        buckets2 = month_buckets(dates2, bucket_months)
+        dates1, dates2 = apply_buckets(buckets1, buckets2, len1, len2)
+        print(f"# With bucket_months = {bucket_months:2d}, " 
+              f"reduced counts from {len1:6d} and {len2:6d} to {len(dates1):6d} and {len(dates2):6d}")
+    return dates1, dates2
+
+def apply_buckets(buckets1, buckets2, n1, n2):
+    new_dates1 = []
+    new_dates2 = []
+    for bucket in buckets1:
+        bucket1 = buckets1[bucket]
+        bucket2 = buckets2[bucket]
+        len1 = len(bucket1)
+        prop1 = len1 / n1
+        len2 = len(bucket2)
+        prop2 = len2 / n2
+        if prop1 < prop2:
+            shuffle(bucket2)
+            new_len2 = int(0.5 + len2 * prop1 / prop2)
+            if new_len2 < len2:
+                bucket2 = bucket2[:new_len2]
+        elif prop2 < prop1:
+            shuffle(bucket1)
+            new_len1 = int(0.5 + len1 * prop2 / prop1)
+            if new_len1 < len1:
+                bucket1 = bucket1[:new_len1]
+        new_dates1.extend(bucket1)
+        new_dates2.extend(bucket2)
+    return np.array(new_dates1), np.array(new_dates2)
+
+
 def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     if not (dates1 and dates2):
         return
@@ -164,14 +234,17 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     max_orbit = args.max_orbit
     degree_step = args.degree_step
     max_harmonic = args.max_harmonic
-    min_sun_harmonic = args.min_sun_harmonic
+    min_harmonic = args.min_harmonic
     rads1_dct = {}
     rads2_dct = {}
     planets_to_use = [
         p for p in PLANETS if p <= max_planet and ORBITAL_PERIOD[p] <= max_orbit
     ]
     planets_to_use2 = [p for p in PLANETS if p <= max_planet]
-    for h in range(1, max_harmonic + 1):
+    dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
+    if min(len(dates1), len(dates2)) < args.min_dataset_size:
+        return
+    for h in range(min_harmonic, max_harmonic + 1):
         for p in planets_to_use:
             if p not in rads1_dct:
                 rads1_dct[p] = radian_positions(dates1, p)
@@ -190,6 +263,8 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
             for p2 in planets_to_use2:
                 if p2 <= p:
                     continue
+                if h <= args.max_strict_harmonic and (p > 3 or p2 > 3):  # if strict, only consider aspects between fast movers
+                    continue
                 if p2 not in rads1_dct:
                     rads1_dct[p2] = radian_positions(dates1, p2)
                     rads2_dct[p2] = radian_positions(dates2, p2)
@@ -202,11 +277,9 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                     f"{z:9.5f} {h:2d} {ABBREV[p]:2s}   {ABBREV[p2]:2s} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
                 )
                 sys.stdout.flush()
-            if h < min_sun_harmonic and p in [0, 2, 3]:
-                continue  # avoid hemisphere effect for Sun and inner planets
-            for d in range(
-                0, 180, degree_step
-            ):  # don't need full circle because cos is antisymmetric
+            if h <= args.max_strict_harmonic and p != 1:  # if strict, only look at moon position
+                continue
+            for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
                 dr = d * math.pi / 180
                 roc = calculate_roc(denom, dr, h, rads1, rads2)
                 z = (roc - 0.5) / null_sd
@@ -247,31 +320,42 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max_size_ratio", type=float, default=5.0)
     parser.add_argument("--max_planet", type=int, default=20)
-    parser.add_argument("--max_harmonic", type=int, default=6)
+    parser.add_argument("--max_harmonic", type=int, default=11)
     parser.add_argument("--degree_step", type=int, default=15)
-    parser.add_argument("--max_orbit", type=float, default=10)
-    parser.add_argument("--min_sun_harmonic", type=int, default=3)
+    parser.add_argument("--max_orbit", type=float, default=30)
+    parser.add_argument("--min_harmonic", type=int, default=1)
+    parser.add_argument("--max_strict_harmonic", type=int, default=0)
+    parser.add_argument("--match_by_years", type=int, default=5)
+    parser.add_argument("--match_by_months", type=int, default=3)
+    parser.add_argument("--min_dataset_size", type=int, default=100)
+    parser.add_argument("--pairs_first", action="store_true", default=False)
+    parser.add_argument("--strict", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
     files = args.files
     dates = {}
-    # print("# Getting dates")
-    # sys.stdout.flush()
     for f in files:
         dates[f] = get_dates(f)
-    # print("# Finished getting dates")
-    # sys.stdout.flush()
     files = sorted(files, key=lambda f: -len(dates[f]))
-    for i, f1 in enumerate(files):
-        for f2 in files[i + 1 :]:
-            if size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
-                compare_files(
-                    args,
-                    os.path.basename(f1),
-                    dates[f1],
-                    os.path.basename(f2),
-                    dates[f2],
-                )
+    for delta1 in range(1, len(files)):
+        if args.pairs_first and delta1 < 3:
+            delta = 2 - delta1
+        else:
+            delta = delta1
+        for i, f1 in enumerate(files):
+            print(f"# delta = {delta}, i = {i}")
+            if i + delta >= len(files):
+                break
+            f2 = files[i + delta]
+            if not size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
+                break
+            compare_files(
+                args,
+                os.path.basename(f1),
+                dates[f1],
+                os.path.basename(f2),
+                dates[f2],
+            )
 
 
 if __name__ == "__main__":
