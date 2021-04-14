@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import argparse
+import cmath
 import collections
 import csv
 import math
@@ -227,6 +228,10 @@ def apply_buckets(buckets1, buckets2, n1, n2):
     return np.array(new_dates1), np.array(new_dates2)
 
 
+def calculate_mean_positions(rads: np.ndarray) -> np.ndarray:
+    return np.array([float(np.mean(np.cos(rads))), float(np.mean(np.sin(rads)))])
+
+
 def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     if not (dates1 and dates2):
         return
@@ -249,11 +254,15 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     if min(len(dates1), len(dates2)) < args.min_dataset_size:
         return
     for h in range(min_harmonic, max_harmonic + 1):
+        means1_dct = {}
+        means2_dct = {}
         for p in planets_to_use:
             if p not in rads1_dct:
                 rads1_dct[p] = radian_positions(dates1, p)
                 rads2_dct[p] = radian_positions(dates2, p)
-                # print(f"# Calculated positions for planet {p}")
+            if p not in means1_dct:
+                means1_dct[p] = calculate_mean_positions(rads1_dct[p] * h)
+                means2_dct[p] = calculate_mean_positions(rads2_dct[p] * h)
             rads1 = rads1_dct[p]
             rads2 = rads2_dct[p]
             len_tuple = tuple(sorted([len(rads1), len(rads2)]))
@@ -271,7 +280,9 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                 if p2 not in rads1_dct:
                     rads1_dct[p2] = radian_positions(dates1, p2)
                     rads2_dct[p2] = radian_positions(dates2, p2)
-                    # print(f"# Calculated positions for planet {p2}")
+                if p2 not in means2_dct:
+                    means1_dct[p2] = calculate_mean_positions(rads1_dct[p2] * h)
+                    means2_dct[p2] = calculate_mean_positions(rads2_dct[p2] * h)
                 rads1_diff = rads1 - rads1_dct[p2]
                 rads2_diff = rads2 - rads2_dct[p2]
                 # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
@@ -284,14 +295,22 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                 sys.stdout.flush()
             if h <= args.max_strict_harmonic and p != 1:  # if strict, only look at moon position
                 continue
-            for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
-                dr = d * math.pi / 180
-                roc = calculate_roc(denom, dr, h, rads1, rads2)
-                z = (roc - 0.5) / null_sd
-                print(
-                    f"{z:9.5f} {h:2d} {ABBREV[p]:2s} {d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
-                )
-                sys.stdout.flush()
+            vector = means2_dct[p] - means1_dct[p]
+            vcomp = complex(vector[0], vector[1])
+            magnitude, angle = cmath.polar(vcomp)
+            data = np.concatenate([rads1_dct[p], rads2_dct[p]])
+            diff_sd = np.sqrt((np.var(np.cos(data)) + np.var(np.sin(data))) * (1 / len(dates1) + 1 / len(dates2)))
+            diff_z = magnitude / diff_sd
+            print(f"{diff_z:9.5f} {h:2d} {ABBREV[p]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}")
+            if degree_step > 0:
+                for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
+                    dr = d * math.pi / 180
+                    roc = calculate_roc(denom, dr, h, rads1, rads2)
+                    z = (roc - 0.5) / null_sd
+                    print(
+                        f"{z:9.5f} {h:2d} {ABBREV[p]:2s} {d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
+                    )
+                    sys.stdout.flush()
 
 
 def calculate_roc(denom, dr, h, rads1, rads2):
@@ -334,7 +353,7 @@ def main():
         else:
             delta = delta1
         for i, f1 in enumerate(files):
-            print(f"# delta = {delta}, i = {i}")
+            #print(f"# delta = {delta}, i = {i}")
             if i + delta >= len(files):
                 break
             f2 = files[i + delta]
@@ -353,7 +372,7 @@ def parse_arguments():
     parser.add_argument("--max_size_ratio", type=float, default=5.0)
     parser.add_argument("--max_planet", type=int, default=20)
     parser.add_argument("--max_harmonic", type=int, default=11)
-    parser.add_argument("--degree_step", type=int, default=15)
+    parser.add_argument("--degree_step", type=int, default=0)
     parser.add_argument("--max_orbit", type=float, default=30)
     parser.add_argument("--min_harmonic", type=int, default=1)
     parser.add_argument("--max_strict_harmonic", type=int, default=0)
