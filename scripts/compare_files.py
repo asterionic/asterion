@@ -280,9 +280,6 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                 if p2 not in rads1_dct:
                     rads1_dct[p2] = radian_positions(dates1, p2)
                     rads2_dct[p2] = radian_positions(dates2, p2)
-                if p2 not in means2_dct:
-                    means1_dct[p2] = calculate_mean_positions(rads1_dct[p2] * h)
-                    means2_dct[p2] = calculate_mean_positions(rads2_dct[p2] * h)
                 rads1_diff = rads1 - rads1_dct[p2]
                 rads2_diff = rads2 - rads2_dct[p2]
                 # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
