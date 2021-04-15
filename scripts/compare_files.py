@@ -239,12 +239,14 @@ def calculate_mean_positions(rads: np.ndarray) -> np.ndarray:
 
 
 def effective_orbital_period(p1, p2):
+    # In time op1, p1 will go round once and p2 will go round op1/op2 times, so
+    # difference goes round (op1-op2)/op2 times. So OP of difference is op1*op2/(op1-op2).
     op1 = ORBITAL_PERIOD[p1]
     op2 = ORBITAL_PERIOD[p2]
     if p1 in [2, 3] and p2 not in [0, 2, 3]:
-        op1 = 1
+        op1 = 1  # p1 is Me or Vn; goes roughly like Su
     elif p2 in [2, 3] and p1 not in [0, 2, 3]:
-        op2 = 1
+        op2 = 1  # p2 is Me or Vn; goes roughly like Su
     return op1 * op2 / abs(op1 - op2)
 
 
