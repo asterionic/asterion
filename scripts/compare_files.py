@@ -16,11 +16,16 @@ import roc_sd
 
 swe.set_ephe_path("/home/dmc/astrolog/astephem")
 
+# Statistics which should be independent of long-term effects:
+# 1) Su-Mo-Me-Vn-Ma, singly and all pairs [0-4]
+# 2) Ce-Pa-Jn-Vs singly (not pairs) [17-20]
+# 3) Pairs between 1) and 3) except Ma-Vs [4-20] which is close to factor of 2
+
 PLANET_STR = """
 0 Sun 1.0
 1 Moon 0.074
-2 Mercury 1.0
-3 Vnus 1.0
+2 Mercury 0.241
+3 Vnus 0.699
 4 Mars 1.88
 5 Jpiter 11.83
 6 Saturn 29.46
@@ -179,7 +184,8 @@ def month_buckets(dates, bucket_size_in_months):
     zero_date = swe.julday(1900, 1, 1)
     buckets = collections.defaultdict(list)
     for date in dates:
-        year_fraction = (date - zero_date) / days_in_year
+        year_fraction = (date - zero_date) / days_in_year + 1000
+        year_fraction -= int(year_fraction)
         bucket = int(year_fraction * 12 / bucket_size_in_months)
         buckets[bucket].append(date)
     return buckets
@@ -232,6 +238,16 @@ def calculate_mean_positions(rads: np.ndarray) -> np.ndarray:
     return np.array([float(np.mean(np.cos(rads))), float(np.mean(np.sin(rads)))])
 
 
+def effective_orbital_period(p1, p2):
+    op1 = ORBITAL_PERIOD[p1]
+    op2 = ORBITAL_PERIOD[p2]
+    if p1 in [2, 3] and p2 not in [0, 2, 3]:
+        op1 = 1
+    elif p2 in [2, 3] and p1 not in [0, 2, 3]:
+        op2 = 1
+    return op1 * op2 / abs(op1 - op2)
+
+
 def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     if not (dates1 and dates2):
         return
@@ -245,7 +261,6 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     planets_to_use = [
         p for p in PLANETS if p <= max_planet and ORBITAL_PERIOD[p] <= max_orbit
     ]
-    planets_to_use2 = [p for p in PLANETS if p <= max_planet]
     dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
     if args.shuffle:
         dates12 = np.concatenate([dates1, dates2])
@@ -272,10 +287,8 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
             null_sd = ROC_SD[len_tuple]
             sys.stdout.flush()
             denom = len(rads1) * len(rads2)
-            for p2 in planets_to_use2:
-                if p2 <= p:
-                    continue
-                if h <= args.max_strict_harmonic and (p > 3 or p2 > 3):  # if strict, only consider aspects between fast movers
+            for p2 in planets_to_use:
+                if p2 <= p or effective_orbital_period(p, p2) > h * args.max_orbit:
                     continue
                 if p2 not in rads1_dct:
                     rads1_dct[p2] = radian_positions(dates1, p2)
@@ -290,8 +303,6 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                     f"{z:9.5f} {h:2d} {ABBREV[p]:2s}   {ABBREV[p2]:2s} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
                 )
                 sys.stdout.flush()
-            if h <= args.max_strict_harmonic and p != 1:  # if strict, only look at moon position
-                continue
             vector = means2_dct[p] - means1_dct[p]
             vcomp = complex(vector[0], vector[1])
             magnitude, angle = cmath.polar(vcomp)
@@ -370,17 +381,18 @@ def parse_arguments():
     parser.add_argument("--max_planet", type=int, default=20)
     parser.add_argument("--max_harmonic", type=int, default=11)
     parser.add_argument("--degree_step", type=int, default=0)
-    parser.add_argument("--max_orbit", type=float, default=30)
+    parser.add_argument("--max_orbit", type=float, default=5)
     parser.add_argument("--min_harmonic", type=int, default=1)
-    parser.add_argument("--max_strict_harmonic", type=int, default=0)
-    parser.add_argument("--match_by_years", type=int, default=5)
-    parser.add_argument("--match_by_months", type=int, default=3)
+    parser.add_argument("--match_by_years", type=int, default=0)
+    parser.add_argument("--match_by_months", type=int, default=0)
     parser.add_argument("--min_dataset_size", type=int, default=100)
     parser.add_argument("--pairs_first", action="store_true", default=False)
-    parser.add_argument("--strict", action="store_true", default=False)
     parser.add_argument("--shuffle", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
+    for a in sorted(dir(args)):
+        if a != "files" and not a.startswith("_"):
+            print(f"# --{a} {getattr(args, a)}")
     return args
 
 
