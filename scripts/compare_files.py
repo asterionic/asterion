@@ -243,6 +243,10 @@ def effective_orbital_period(p1, p2):
     # difference goes round (op1-op2)/op2 times. So OP of difference is op1*op2/(op1-op2).
     op1 = ORBITAL_PERIOD[p1]
     op2 = ORBITAL_PERIOD[p2]
+    if p1 in [2, 3] and p2 == 0:
+        return op1
+    if p2 in [2, 3] and p1 == 0:
+        return op2
     if p1 in [2, 3] and p2 not in [0, 2, 3]:
         op1 = 1  # p1 is Me or Vn; goes roughly like Su
     elif p2 in [2, 3] and p1 not in [0, 2, 3]:
@@ -260,9 +264,7 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
     min_harmonic = args.min_harmonic
     rads1_dct = {}
     rads2_dct = {}
-    planets_to_use = [
-        p for p in PLANETS if p <= max_planet and ORBITAL_PERIOD[p] <= max_orbit
-    ]
+    planets_to_use = [p for p in PLANETS if p <= max_planet]
     dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
     if args.shuffle:
         dates12 = np.concatenate([dates1, dates2])
@@ -290,7 +292,10 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
             sys.stdout.flush()
             denom = len(rads1) * len(rads2)
             for p2 in planets_to_use:
-                if p2 <= p or effective_orbital_period(p, p2) > h * args.max_orbit:
+                if p2 <= p:
+                    continue
+                eop = effective_orbital_period(p, p2)
+                if eop > h * args.max_orbit or abs(eop - 1) < 1 / (h * args.max_orbit):
                     continue
                 if p2 not in rads1_dct:
                     rads1_dct[p2] = radian_positions(dates1, p2)
@@ -302,23 +307,26 @@ def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
                 roc = calculate_roc(denom, 0.0, h, rads1_diff, rads2_diff)
                 z = (roc - 0.5) / null_sd
                 print(
-                    f"{z:9.5f} {h:2d} {ABBREV[p]:2s}   {ABBREV[p2]:2s} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
+                    f"{z:9.5f} {h:2d} {ABBREV[p]:2s}   {ABBREV[p2]:2s} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}"
                 )
                 sys.stdout.flush()
+            eop = ORBITAL_PERIOD[0 if p in [2, 3] else p]
+            if eop > args.max_orbit * h or abs(eop - 1) < 1 / (h * args.max_orbit):
+                continue
             vector = means2_dct[p] - means1_dct[p]
             vcomp = complex(vector[0], vector[1])
             magnitude, angle = cmath.polar(vcomp)
             data = np.concatenate([rads1_dct[p], rads2_dct[p]])
             diff_sd = np.sqrt((np.var(np.cos(data)) + np.var(np.sin(data))) * (1 / len(dates1) + 1 / len(dates2)))
             diff_z = magnitude / diff_sd
-            print(f"{diff_z:9.5f} {h:2d} {ABBREV[p]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}")
+            print(f"{diff_z:9.5f} {h:2d} {ABBREV[p]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}")
             if degree_step > 0:
                 for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
                     dr = d * math.pi / 180
                     roc = calculate_roc(denom, dr, h, rads1, rads2)
                     z = (roc - 0.5) / null_sd
                     print(
-                        f"{z:9.5f} {h:2d} {ABBREV[p]:2s} {d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s}"
+                        f"{z:9.5f} {h:2d} {ABBREV[p]:2s} {d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}"
                     )
                     sys.stdout.flush()
 
@@ -395,6 +403,7 @@ def parse_arguments():
     for a in sorted(dir(args)):
         if a != "files" and not a.startswith("_"):
             print(f"# --{a} {getattr(args, a)}")
+    sys.stdout.flush()
     return args
 
 
