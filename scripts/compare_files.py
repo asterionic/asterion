@@ -6,163 +6,86 @@ import csv
 import math
 import os
 import sys
+from enum import Enum
 from random import random, shuffle
-from typing import Tuple
+from typing import Tuple, List, Dict
+from pathlib import Path
 
 import numpy as np
 import swisseph as swe
 
+from roc_estimates import ROC_SD
 import roc_sd
 
 swe.set_ephe_path("/home/dmc/astrolog/astephem")
 
-# Statistics which should be independent of long-term effects:
-# 1) Su-Mo-Me-Vn-Ma, singly and all pairs [0-4]
-# 2) Ce-Pa-Jn-Vs singly (not pairs) [17-20]
-# 3) Pairs between 1) and 3) except Ma-Vs [4-20] which is close to factor of 2
+SUN = 0
+MERCURY = 2
+VENUS = 3
 
-PLANET_STR = """
-0 Sun 1.0
-1 Moon 0.074
-2 Mercury 0.241
-3 Vnus 0.699
-4 Mars 1.88
-5 Jpiter 11.83
-6 Saturn 29.46
-7 Uranus 84
-8 Neptune 165 
-9 Pluto 248
-11 Node 18.6
-15 Chiron 50
-16 Pholus 92
-17 Ceres 4.6
-18 Pallas 4.62
-19 Jno 4.36
-20 Vsta 3.63
 """
+For each "planet" we're going to consider, we record its index in SwissEph, its full name, a unique two-letter
+identifier, and its orbital period in years. (Astrologers use the term "planet" to include not only true astronomical
+planets but all bodies of interest in the solar system, including the Sun, Moon, asteroids and other things too small
+to be planets).
+"""
+PLANET_DATA = [
+    (0, "Sun", "Su", 1.0),
+    (1, "Moon", "Mo", 0.074),
+    (2, "Mercury", "Me", 0.241),
+    (3, "Venus", "Ve", 0.699),
+    (4, "Mars", "Ma", 1.88),
+    (5, "Jupiter", "Jp", 11.83),
+    (6, "Saturn", "Sa", 29.46),
+    (7, "Uranus", "Ur", 84),
+    (8, "Neptune", "Ne", 165),
+    (9, "Pluto", "Pl", 248),
+    (11, "Node", "Nd", 18.6),
+    (15, "Chiron", "Ch", 50),
+    (16, "Pholus", "Ph", 92),
+    (17, "Ceres", "Ce", 4.6),
+    (18, "Pallas", "Pa", 4.62),
+    (19, "Juno", "Jn", 4.36),
+    (20, "Vesta", "Vs", 3.63),
+]
 
-PLANETS = []
-ORBITAL_PERIOD = {}
-ABBREV = {}
-for line in PLANET_STR.split("\n"):
-    toks = line.split()
-    if len(toks) >= 2:
-        PLANETS.append(int(toks[0]))
-    if len(toks) >= 3:
-        ORBITAL_PERIOD[int(toks[0])] = float(toks[2])
-        ABBREV[int(toks[0])] = toks[1][:2]
-
-ROC_SD = {
-    (192052, 208507): 0.0009,
-    (12277, 23601): 0.002984,
-    (12382, 23601): 0.003465,
-    (12968, 23601): 0.003099,
-    (12968, 25907): 0.003469,
-    (13139, 23601): 0.003463,
-    (13139, 25907): 0.003227,
-    (13139, 26031): 0.002989,
-    (13139, 26057): 0.002989,
-    (13802, 23601): 0.002970,
-    (13802, 25907): 0.003022,
-    (13802, 26031): 0.003125,
-    (13802, 26057): 0.003568,
-    (15184, 23601): 0.002597,
-    (15184, 25907): 0.002804,
-    (15184, 26031): 0.003020,
-    (15184, 26057): 0.003079,
-    (15184, 28205): 0.003013,
-    (15184, 29454): 0.003254,
-    (16089, 23601): 0.002922,
-    (16089, 25907): 0.002805,
-    (16089, 26031): 0.002640,
-    (16089, 26057): 0.002674,
-    (16089, 28205): 0.002615,
-    (16089, 29454): 0.003047,
-    (16175, 23601): 0.003365,
-    (16175, 25907): 0.002948,
-    (16175, 26031): 0.002855,
-    (16175, 26057): 0.002811,
-    (16175, 28205): 0.002966,
-    (16175, 29454): 0.002484,
-    (192052, 208507): 0.000900,
-    (20456, 23601): 0.003033,
-    (20456, 25907): 0.002539,
-    (20456, 26031): 0.002928,
-    (20456, 26057): 0.002497,
-    (20456, 28205): 0.002666,
-    (20456, 29454): 0.002602,
-    (20456, 37785): 0.002458,
-    (20456, 38231): 0.002581,
-    (21654, 23399): 0.002624,
-    (21654, 23601): 0.002828,
-    (21654, 25907): 0.002493,
-    (21654, 26031): 0.002555,
-    (21654, 26057): 0.002307,
-    (21654, 28205): 0.002526,
-    (21654, 29454): 0.002684,
-    (21654, 37785): 0.002432,
-    (21654, 38231): 0.002326,
-    (23227, 23399): 0.002747,
-    (23227, 23601): 0.002683,
-    (23227, 25907): 0.002863,
-    (23227, 26031): 0.002613,
-    (23227, 26057): 0.002530,
-    (23227, 28205): 0.002635,
-    (23227, 29454): 0.002556,
-    (23227, 37785): 0.002266,
-    (23227, 38231): 0.002267,
-    (23399, 23601): 0.002812,
-    (23399, 25907): 0.002780,
-    (23399, 26031): 0.002638,
-    (23399, 26057): 0.002442,
-    (23399, 28205): 0.002612,
-    (23399, 29454): 0.002659,
-    (23399, 37785): 0.002573,
-    (23399, 38231): 0.002474,
-    (23601, 25907): 0.002914,
-    (23601, 26031): 0.002405,
-    (23601, 26057): 0.002190,
-    (23601, 28205): 0.002309,
-    (23601, 29454): 0.002471,
-    (23601, 37785): 0.002134,
-    (23601, 38231): 0.002514,
-    (25907, 26031): 0.002567,
-    (25907, 26057): 0.002594,
-    (25907, 28205): 0.002385,
-    (25907, 29454): 0.002448,
-    (25907, 37785): 0.002238,
-    (25907, 38231): 0.002005,
-    (26031, 26057): 0.002642,
-    (26031, 28205): 0.002640,
-    (26031, 29454): 0.002563,
-    (26031, 37785): 0.002002,
-    (26031, 38231): 0.002245,
-    (26057, 28205): 0.002468,
-    (26057, 29454): 0.002274,
-    (26057, 37785): 0.002362,
-    (26057, 38231): 0.002447,
-    (28205, 29454): 0.002264,
-    (28205, 37785): 0.002303,
-    (28205, 38231): 0.002210,
-    (29454, 37785): 0.002363,
-    (29454, 38231): 0.002375,
-    (37785, 38231): 0.002106,
-    (37785, 61516): 0.001736,
-    (38231, 61516): 0.002005,
-}
+PLANETS = [t[0] for t in PLANET_DATA]
+PLANET_NAME = dict((t[0], t[1]) for t in PLANET_DATA)
+ORBITAL_PERIOD = dict((t[0], t[3]) for t in PLANET_DATA)
+ABBREV = dict((t[0], t[2]) for t in PLANET_DATA)
 
 
-def get_dates(f):
+def get_paths_and_dates(files: List[str]) -> Tuple[List[Path], Dict[Path, np.ndarray]]:
+    """
+    :param files: a list of file paths; each should be a csv file containing data expected by get_dates
+    :return: paths: a list of Path objects, one for each file, ordered by decreasing number of successfully
+    extracted dates in the file; and dates: a dictionary from paths to arrays of day values.
+    """
+    paths = [Path(f) for f in files]
+    dates = dict((p, get_dates(p)) for p in paths)
+    paths.sort(key=lambda p: len(dates[p]), reverse=True)
+    return paths, dates
+
+
+def get_dates(path: Path):
+    """
+    :param path: a csv file, assumed to contain a date in the last column of each row.
+    The date should be in the form yyyy-mm-dd. We keep dates in 1800 or later, as earlier
+    dates may be inaccurate or use a different calendar. We assume there is no time information,
+    so we set the time to a random number of hours between 0 and 24.
+    :return: an array of "Julian" (actually Gregorian) day values, one for each date in the file.
+    """
     dates = []
-    with open(f) as fh:
-        for _, day in csv.reader(fh):
+    with path.open() as inp:
+        for row in csv.reader(inp):
             try:
+                day = row[-1]
                 y, m, d = day.split("-")
                 if int(y) > 1800 and int(m) > 0 and int(d) > 0:
-                    dates.append(swe.julday(int(y), int(m), int(d), 12.0))
-            except:
+                    dates.append(swe.julday(int(y), int(m), int(d), 24.0 * random()))
+            except: # not all rows may be of the expected format
                 pass
-    return dates
+    return np.array(dates)
 
 
 def year_buckets(dates, bucket_size_in_years):
@@ -238,116 +161,203 @@ def calculate_mean_positions(rads: np.ndarray) -> np.ndarray:
     return np.array([float(np.mean(np.cos(rads))), float(np.mean(np.sin(rads)))])
 
 
-def effective_orbital_period(p1, p2):
+def effective_orbital_period(p1: int, p2: int) -> float:
+    """
+    :param p1: number for one planet
+    :param p2: number for another planet, different from p1
+    :return: the effective period for the angle between the two planets, averaged over a long time,
+    as seen from Earth. For example if p1 orbits in 5 years and p2 in 2 years, then over 1000 years,
+    p1 will orbit 200 times and p2 500 times, and the angle (difference) between them will cycle around
+    500-200=300 times, i.e. 10/3 years per cycle on average.
+    """
+    assert p1 != p2
     # In time op1, p1 will go round once and p2 will go round op1/op2 times, so
     # difference goes round (op1-op2)/op2 times. So OP of difference is op1*op2/(op1-op2).
     op1 = ORBITAL_PERIOD[p1]
     op2 = ORBITAL_PERIOD[p2]
-    if p1 in [2, 3] and p2 == 0:
+    inner_planets = [MERCURY, VENUS]
+    # Aspect between Mercury or Venus and Sun has period of Mercury or Venus respectively.
+    if p1 in inner_planets and p2 == SUN:
         return op1
-    if p2 in [2, 3] and p1 == 0:
+    if p2 in inner_planets and p1 == SUN:
         return op2
-    if p1 in [2, 3] and p2 not in [0, 2, 3]:
-        op1 = 1  # p1 is Me or Vn; goes roughly like Su
-    elif p2 in [2, 3] and p1 not in [0, 2, 3]:
-        op2 = 1  # p2 is Me or Vn; goes roughly like Su
+    # For an aspect an inner planet and an outer planet, the inner planet's motion is
+    # Sun plus an oscillation, so its period is effectively that of the Sun.
+    if p1 in inner_planets and p2 not in inner_planets + [SUN]:
+        op1 = ORBITAL_PERIOD[SUN]
+    elif p2 in inner_planets and p1 not in inner_planets + [SUN]:
+        op2 = ORBITAL_PERIOD[SUN]
+    # In time op1, p1 will go round once and p2 will go round op1/op2 times, so the difference between them goes
+    # round (op1-op2)/op2 times. Therefore in time 1, the difference goes round (op1-op2)/(op1*op2) times, and
+    # the effective orbital period is the inverse of that.
     return op1 * op2 / abs(op1 - op2)
 
 
-def compare_files(args: argparse.Namespace, f1, dates1, f2, dates2):
-    if not (dates1 and dates2):
-        return
-    max_planet = args.max_planet
-    max_orbit = args.max_orbit
-    degree_step = args.degree_step
-    max_harmonic = args.max_harmonic
-    min_harmonic = args.min_harmonic
-    rads1_dct = {}
-    rads2_dct = {}
-    planets_to_use = [p for p in PLANETS if p <= max_planet]
-    dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
-    if args.shuffle:
-        dates12 = np.concatenate([dates1, dates2])
-        shuffle(dates12)
-        dates1, dates2 = dates12[:len(dates1)], dates12[len(dates1):]
+def compare_files(args: argparse.Namespace, f1: str, dates1: np.ndarray, f2: str, dates2: np.ndarray):
     if min(len(dates1), len(dates2)) < args.min_dataset_size:
         return
-    for h in range(min_harmonic, max_harmonic + 1):
+    # Dictionary from planet numbers to an array of planet positions in radians, one for each date in dates1.
+    rads1_dct = {}
+    # Ditto for dates2.
+    rads2_dct = {}
+    # List of planets we're going to consider.
+    planets_to_use = [p for p in PLANETS if p <= args.max_planet]
+    # If time buckets (by numbers of years and/or time of year) were specified, we prune the data accordingly.
+    dates1, dates2 = match_by_time_buckets(dates1, dates2, args.match_by_years, args.match_by_months)
+    # We check sizes again, in case pruning has reduced them below the minimum.
+    if min(len(dates1), len(dates2)) < args.min_dataset_size:
+        return
+    if args.shuffle:
+        dates1, dates2 = shuffle_dates_between_categories(dates1, dates2)
+    null_sd = null_hypothesis_roc_standard_deviation(len(dates1), len(dates2))
+    for h in range(args.min_harmonic, args.max_harmonic + 1):
+        # Dictionary from planet numbers to the mean (centroid) of the positions of that planet
+        # on dates in dates1, treating the zodiac as a unit circle.
         means1_dct = {}
+        # Ditto for dates2.
         means2_dct = {}
-        for p in planets_to_use:
-            if p not in rads1_dct:
-                rads1_dct[p] = radian_positions(dates1, p)
-                rads2_dct[p] = radian_positions(dates2, p)
-            if p not in means1_dct:
-                means1_dct[p] = calculate_mean_positions(rads1_dct[p] * h)
-                means2_dct[p] = calculate_mean_positions(rads2_dct[p] * h)
-            rads1 = rads1_dct[p]
-            rads2 = rads2_dct[p]
-            len_tuple = tuple(sorted([len(rads1), len(rads2)]))
-            if len_tuple not in ROC_SD:
-                ROC_SD[len_tuple] = roc_sd.roc_sd(*len_tuple, extra_samples=1000000)[0]
-                print(f"# null_sd{len_tuple} = {ROC_SD[len_tuple]:8.6f}")
-            null_sd = ROC_SD[len_tuple]
-            sys.stdout.flush()
-            denom = len(rads1) * len(rads2)
-            for p2 in planets_to_use:
-                if p2 <= p:
+        for ia, pa in enumerate(planets_to_use):
+            if pa not in rads1_dct:
+                # Fill rads1_dct and rads2_dct for planet pa.
+                calculate_planet_radians(dates1, pa, rads1_dct)
+                calculate_planet_radians(dates2, pa, rads2_dct)
+            if pa not in means1_dct:
+                # Fill means1_dct and means2_dct for planet pa.
+                means1_dct[pa] = calculate_mean_positions(rads1_dct[pa] * h)
+                means2_dct[pa] = calculate_mean_positions(rads2_dct[pa] * h)
+            # Calculate statistics line for difference between position of pa and every later planet.
+            for pb in planets_to_use[ia + 1:]:
+                # Effective period for the angle between planets pa and pb.
+                eop = effective_orbital_period(pa, pb)
+                if too_slow_or_too_seasonal(eop, h * args.max_orbit):
+                    # The angle moves slowly enough that generational effects may be the cause of any
+                    # non-randomness, or its period is close enough to 1 year that seasonality may be the cause.
                     continue
-                eop = effective_orbital_period(p, p2)
-                if eop > h * args.max_orbit or abs(eop - 1) < 1 / (h * args.max_orbit):
-                    continue
-                if p2 not in rads1_dct:
-                    rads1_dct[p2] = radian_positions(dates1, p2)
-                    rads2_dct[p2] = radian_positions(dates2, p2)
-                rads1_diff = rads1 - rads1_dct[p2]
-                rads2_diff = rads2 - rads2_dct[p2]
+                if pb not in rads1_dct:
+                    # Fill rads1_dct and rads2_dct for planet pb.
+                    calculate_planet_radians(dates1, pb, rads1_dct)
+                    calculate_planet_radians(dates2, pb, rads2_dct)
+                # Differences between positions of planets pa and pb, over all entries in rads1_dct (first dataset).
+                rads1_diff = rads1_dct[pa] - rads1_dct[pb]
+                # Ditto for rads2_dct (second dataset).
+                rads2_diff = rads2_dct[pa] - rads2_dct[pb]
                 # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
                 # p_values = scipy.stats.norm.sf(abs(z_scores))*2 #twosided
-                roc = calculate_roc(denom, 0.0, h, rads1_diff, rads2_diff)
+                roc = calculate_roc(0.0, h, rads1_diff, rads2_diff)
+                # z value is number of standard deviations by which roc deviates from 0.5, given an estimated
+                # standard deviation null_sd.
                 z = (roc - 0.5) / null_sd
-                print(
-                    f"{z:9.5f} {h:2d} {ABBREV[p]:2s}   {ABBREV[p2]:2s} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}"
-                )
+                # Fields in this line: z value, harmonic number, two-letter abbreviations for the two planets,
+                # roc value, number of entries and name of first dataset, number of entries and name of second
+                # dataset, and effective orbital period of the difference angle when multiplied by the harmonic.
+                # If this last value is big (enough years for generational effects to be relevant) or close to 1.0
+                # (so seasonal effects may be relevant) then treat the z value with scepticism.
+                print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s}   {ABBREV[pb]:2s} {roc:8.6f} " 
+                      f"{len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}")
                 sys.stdout.flush()
-            eop = ORBITAL_PERIOD[0 if p in [2, 3] else p]
-            if eop > args.max_orbit * h or abs(eop - 1) < 1 / (h * args.max_orbit):
+            # Calculate statistics line(s) for position of pa itself.
+            eop = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
+            if too_slow_or_too_seasonal(eop, h * args.max_orbit):
                 continue
-            vector = means2_dct[p] - means1_dct[p]
+            # Vector (in (x,y) coordinate space) for difference between means of the two sets. This will be somewhere
+            # inside the unit circle, usually very near the centre.
+            vector = means2_dct[pa] - means1_dct[pa]
+            # Convert (x,y) to polar coordinates.
             vcomp = complex(vector[0], vector[1])
-            magnitude, angle = cmath.polar(vcomp)
-            data = np.concatenate([rads1_dct[p], rads2_dct[p]])
+            magnitude, angle = cmath.polar(vcomp)  # type: ignore
+            # Estimate diff_sd, the standard deviation for vector, under the null hypothesis that the two datasets are
+            # from the same distribution. The expected value is (0,0).
+            data = np.concatenate([rads1_dct[pa], rads2_dct[pa]])
             diff_sd = np.sqrt((np.var(np.cos(data)) + np.var(np.sin(data))) * (1 / len(dates1) + 1 / len(dates2)))
             diff_z = magnitude / diff_sd
-            print(f"{diff_z:9.5f} {h:2d} {ABBREV[p]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}")
-            if degree_step > 0:
-                for d in range(0, 180, degree_step):  # don't need full circle because cos is antisymmetric
+            # Statistics line: z value, harmonic, two-letter abbreviation for first planet, angle (in degrees) and
+            # magnitude of centroid, size and name of first dataset, size and name of second dataset, effective
+            # orbital period of the harmonic of the planet.
+            print(f"{diff_z:9.5f} {h:2d} {ABBREV[pa]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} " 
+                  f"{len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}")
+            # If degree_step is positive, we calculate the roc value for the cosines of all the positions of pa over the
+            # two datasets, taking 0, degree_step, 2 * degree_step ... 180 as the origin for the cosines. This is
+            # a (probably inferior) alternative to mean differences. Evaluating z is extra tricky in this case!
+            if args.degree_step > 0:
+                for d in range(0, 180, args.degree_step):  # don't need full circle because cos is antisymmetric
                     dr = d * math.pi / 180
-                    roc = calculate_roc(denom, dr, h, rads1, rads2)
+                    roc = calculate_roc(dr, h, rads1_dct[pa], rads2_dct[pa])
                     z = (roc - 0.5) / null_sd
-                    print(
-                        f"{z:9.5f} {h:2d} {ABBREV[p]:2s} {d:4d} {roc:8.6f} {len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}"
-                    )
+                    # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
+                    # ROC value, size and name of first dataset, size and name of second dataset, effective
+                    # orbital period of the harmonic of the planet.
+                    print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {d:4d} {roc:8.6f}" 
+                          f"{len(dates1):6d} {f1:14s} {len(dates2):6d} {f2:14s} {eop / h:7.3f}")
                     sys.stdout.flush()
 
 
-def calculate_roc(denom, dr, h, rads1, rads2):
+def too_slow_or_too_seasonal(eop: float, max_orbit: float) -> bool:
+    """
+    :param eop: effective orbital period of some quantity
+    :param max_orbit: maximum orbital period we will tolerate
+    :return: true if eop is greater than max_orbit, or is closer to 1 than 1/max_orbit.
+    Thus higher values of max_orbit mean more tolerance.
+    Example: max_orbit = 10 means eop = 9 is OK but 11 is not; and
+    eop = 1.11 is OK but eop = 1.09 is not.
+    """
+    return eop > max_orbit or abs(eop - 1) < 1 / max_orbit
+
+
+def calculate_planet_radians(dates1, p, rads1_dct):
+    rads1_dct[p] = radian_positions(dates1, p)
+
+
+def null_hypothesis_roc_standard_deviation(n1: int, n2: int) -> float:
+    len_tuple = tuple(sorted([n1, n2]))
+    if len_tuple not in ROC_SD:
+        ROC_SD[len_tuple] = roc_sd.roc_sd(*len_tuple, extra_samples=1000000)[0]
+        print(f"# null_sd{len_tuple} = {ROC_SD[len_tuple]:8.6f}")
+    null_sd = ROC_SD[len_tuple]
+    sys.stdout.flush()
+    return null_sd
+
+
+def shuffle_dates_between_categories(dates1, dates2):
+    dates12 = np.concatenate([dates1, dates2])
+    np.shuffle(dates12)
+    dates1, dates2 = dates12[:len(dates1)], dates12[len(dates1):]
+    return dates1, dates2
+
+
+def calculate_roc(dr, h, rads1, rads2):
+    """
+    Returns the ROC (Receiver Operating Characteristic) or AUC (Area Under Curve) value for the given datasets.
+    :param dr: value to add to each angle before taking cosine.
+    :param h: harmonic: value to multiply each angle by (before adding dr)
+    :param rads1: values in set 1, in radians.
+    :param rads2: values in set 2, in radians.
+    :return: ROC value for set 2 vs set 1 (will be > 0.5 if set 2 mostly has higher values).
+    """
+    # Cosine of each angle in rads1 multiplied by h, paired with constant 1.
     pairs1 = cosine_pairs(dr, h, rads1, 1)
+    # Cosine of each angle in rads2 multiplied by h, paired with constant 2.
     pairs2 = cosine_pairs(dr, h, rads2, 2)
+    # Pairs in order, from lowest (most negative) cosine to highest.
+    sorted_pairs = sorted(pairs1 + pairs2)
+    # Number of pairs we've seen so far with 1 in second position. At the end of sorted_pairs, this will be len(rads1).
     n1 = 0
+    # Sum of values of n1 when we encounter a pair with 2 in second position. At the end of sorted_pairs, this will
+    # be the number of pairs with one member from each of rads1 and rads2, such that the cosine value of the rads1
+    # item is less than that of the rads2 item.
     n12 = 0
-    for _, c in sorted(pairs1 + pairs2):
+    for _, c in sorted_pairs:
         if c == 1:
             n1 += 1
         else:
             n12 += n1
-    roc1 = n12 / denom
-    roc = roc1
-    return roc
+    # n1 * len(rads2) is the total number of pairs we can make from rads1 and rads2. So n12 over that value is the
+    # proportion of pairs with the rads1 value less than the rads2 value. If the two sets are from the same distribution
+    # the expected value of this is 0.5.
+    return n12 / (n1 * len(rads2))
 
 
 def cosine_pairs(dr, h, rads, idx):
-    return [(math.cos(h * rad + dr) + 0.00001 * random(), idx) for rad in rads]
+    return [(math.cos(h * rad + dr), idx) for rad in rads]
 
 
 def radian_positions(dates1, p):
@@ -356,33 +366,6 @@ def radian_positions(dates1, p):
 
 def size_ratio_ok(sz1: int, sz2: int, max_size_ratio: float) -> bool:
     return sz1 * max_size_ratio >= sz2 and sz2 * max_size_ratio >= sz1
-
-
-def main():
-    args = parse_arguments()
-    files = args.files
-    dates = {}
-    for f in files:
-        dates[f] = get_dates(f)
-    files = sorted(files, key=lambda f: -len(dates[f]))
-    for delta1 in range(1, len(files)):
-        if args.pairs_first and delta1 < 3:
-            delta = 3 - delta1
-        else:
-            delta = delta1
-        for i, f1 in enumerate(files):
-            #print(f"# delta = {delta}, i = {i}")
-            if i + delta >= len(files):
-                break
-            f2 = files[i + delta]
-            if size_ratio_ok(len(dates[f1]), len(dates[f2]), args.max_size_ratio):
-                compare_files(
-                    args,
-                    os.path.basename(f1),
-                    dates[f1],
-                    os.path.basename(f2),
-                    dates[f2],
-                )
 
 
 def parse_arguments():
@@ -400,11 +383,29 @@ def parse_arguments():
     parser.add_argument("--shuffle", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
+    log_arguments(args)
+    return args
+
+
+def log_arguments(args):
     for a in sorted(dir(args)):
         if a != "files" and not a.startswith("_"):
             print(f"# --{a} {getattr(args, a)}")
     sys.stdout.flush()
-    return args
+
+
+def main():
+    args = parse_arguments()
+    paths, dates = get_paths_and_dates(args.files)
+    for delta1 in range(1, len(paths)):
+        delta = 3 - delta1 if args.pairs_first and delta1 < 3 else delta1
+        for i, path1 in enumerate(paths):
+            if i + delta >= len(paths):
+                break
+            path2 = paths[i + delta]
+            if not size_ratio_ok(len(dates[path1]), len(dates[path2]), args.max_size_ratio):
+                continue
+            compare_files(args, path1.name, dates[path1], path2.name, dates[path2])
 
 
 if __name__ == "__main__":
