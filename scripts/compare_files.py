@@ -100,6 +100,27 @@ class Comparison:
         # List of planets we're going to consider.
         self.planets_to_use = [p for p in PLANETS if p <= self.args.max_planet]
 
+    def run(self):
+        # If time buckets (by numbers of years and/or time of year) were specified, we prune the data accordingly.
+        self.match_by_time_buckets()
+        # We check sizes again, in case pruning has reduced them below the minimum.
+        if min(len(self.dates1), len(self.dates2)) < self.args.min_dataset_size:
+            return
+        if self.args.shuffle:
+            self.shuffle_dates_between_categories()
+        null_sd = self.null_hypothesis_roc_standard_deviation(len(self.dates1), len(self.dates2))
+        self.look_up_planet_positions()
+        for h in range(self.args.min_harmonic, self.args.max_harmonic + 1):
+            for pa in self.planets_to_use:
+                # Calculate statistics line for difference between position of pa and every later planet.
+                for pb, eop_ab in self.planets_to_pair_with(pa, h):
+                    self.compare_planet_pair(h, pa, pb, eop_ab, null_sd)
+                # Calculate statistics line(s) for position of pa itself.
+                eop_a = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
+                if not self.too_slow_or_too_seasonal(eop_a, h):
+                    self.calculate_and_print_difference_vector(h, pa, eop_a)
+                    self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
+
     def year_buckets(self, dates):
         days_in_year = 365.2422
         zero_date = swe.julday(1900, 1, 1)
@@ -201,8 +222,8 @@ class Comparison:
         # the effective orbital period is the inverse of that.
         return op1 * op2 / abs(op1 - op2)
 
-    def print_line(self, z, h, pa, b_str, roc, eop):
-        print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {roc:8.6f} {eop / h:7.3f} {self.identifier}")
+    def print_line(self, z, h, pa, b_str, value, eop):
+        print(f"{abs(z):9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {value:8.6f} {eop / h:7.3f} {self.identifier}")
         sys.stdout.flush()
 
     def planets_to_pair_with(self, p1: int, h: int) -> List[Tuple[int, float]]:
@@ -213,27 +234,6 @@ class Comparison:
                 if not self.too_slow_or_too_seasonal(eop, h):
                     result.append((p2, eop))
         return result
-
-    def run(self):
-        # If time buckets (by numbers of years and/or time of year) were specified, we prune the data accordingly.
-        self.match_by_time_buckets()
-        # We check sizes again, in case pruning has reduced them below the minimum.
-        if min(len(self.dates1), len(self.dates2)) < self.args.min_dataset_size:
-            return
-        if self.args.shuffle:
-            self.shuffle_dates_between_categories()
-        null_sd = self.null_hypothesis_roc_standard_deviation(len(self.dates1), len(self.dates2))
-        self.look_up_planet_positions()
-        for h in range(self.args.min_harmonic, self.args.max_harmonic + 1):
-            for pa in self.planets_to_use:
-                # Calculate statistics line for difference between position of pa and every later planet.
-                for pb, eop_ab in self.planets_to_pair_with(pa, h):
-                    self.compare_planet_pair(h, pa, pb, eop_ab, null_sd)
-                # Calculate statistics line(s) for position of pa itself.
-                eop_a = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
-                if not self.too_slow_or_too_seasonal(eop_a, h):
-                    self.calculate_and_print_difference_vector(h, pa, eop_a)
-                    self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
 
     def calculate_and_print_difference_vector(self, h, pa, eop_a):
         magnitude, angle = self.calculate_mean_difference(h, pa)
@@ -270,10 +270,9 @@ class Comparison:
         # that planet on dates in dates2, minus the same on dates1, treating the zodiac as a unit circle.
         mean1 = self.calculate_mean_positions(self.rads1_dct[p] * h)
         mean2 = self.calculate_mean_positions(self.rads2_dct[p] * h)
-        vector = mean2 - mean1
-        # Convert (x,y) to polar coordinates.
-        vcomp = complex(vector[0], vector[1])
-        magnitude, angle = cmath.polar(vcomp)  # type: ignore
+        vector: np.ndarray = mean2 - mean1
+        # Convert to polar coordinates.
+        magnitude, angle = cmath.polar(complex(vector[0], vector[1]))  # type: ignore
         return magnitude, angle
 
     def compare_planet_pair(self, h, pa, pb, eop_ab, null_sd):
