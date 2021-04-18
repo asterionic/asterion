@@ -88,12 +88,11 @@ def get_dates(path: Path):
 
 class Comparison:
 
-    def __init__(self, args: argparse.Namespace, name1: str, dates1: np.ndarray, name2: str, dates2: np.ndarray):
+    def __init__(self, args: argparse.Namespace, dates1: np.ndarray, dates2: np.ndarray, identifier: str):
         self.args = args
-        self.name1 = name1
         self.dates1 = dates1
-        self.name2 = name2
         self.dates2 = dates2
+        self.identifier = identifier
         # Dictionary from planet numbers to an array of planet positions in radians, one for each date in dates1.
         self.rads1_dct = {}
         # Ditto for dates2.
@@ -202,6 +201,10 @@ class Comparison:
         # the effective orbital period is the inverse of that.
         return op1 * op2 / abs(op1 - op2)
 
+    def print_line(self, z, h, pa, b_str, roc, eop):
+        print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {roc:8.6f} "
+              f"{eop / h:7.3f} {self.identifier}")
+
     def run(self):
         # If time buckets (by numbers of years and/or time of year) were specified, we prune the data accordingly.
         self.match_by_time_buckets()
@@ -255,9 +258,7 @@ class Comparison:
                     # dataset, and effective orbital period of the difference angle when multiplied by the harmonic.
                     # If this last value is big (enough years for generational effects to be relevant) or close to 1.0
                     # (so seasonal effects may be relevant) then treat the z value with scepticism.
-                    print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s}   {ABBREV[pb]:2s} {roc:8.6f} " 
-                          f"{len(self.dates1):6d} {self.name1:14s} {len(self.dates2):6d} {self.name2:14s} "
-                          f"{eop / h:7.3f}")
+                    self.print_line(z, h, pa, ABBREV[pb], roc, eop)
                     sys.stdout.flush()
                 # Calculate statistics line(s) for position of pa itself.
                 eop = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
@@ -277,8 +278,7 @@ class Comparison:
                 # Statistics line: z value, harmonic, two-letter abbreviation for first planet, angle (in degrees) and
                 # magnitude of centroid, size and name of first dataset, size and name of second dataset, effective
                 # orbital period of the harmonic of the planet.
-                print(f"{diff_z:9.5f} {h:2d} {ABBREV[pa]:2s} {int(0.5+angle*180/math.pi):4d} {magnitude:8.6f} " 
-                      f"{len(self.dates1):6d} {self.name1:14s} {len(self.dates2):6d} {self.name2:14s} {eop / h:7.3f}")
+                self.print_line(diff_z, h, pa, str(int(0.5+angle*180/math.pi)), magnitude, eop)
                 # If degree_step is positive, we calculate the roc value for the cosines of all the positions of pa
                 # over the two datasets, taking 0, degree_step, 2 * degree_step ... 180 as the origin for the cosines.
                 # This is a (probably inferior) alternative to mean differences. Evaluating z is extra tricky in this
@@ -292,9 +292,7 @@ class Comparison:
                         # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
                         # ROC value, size and name of first dataset, size and name of second dataset, effective
                         # orbital period of the harmonic of the planet.
-                        print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {d:4d} {roc:8.6f}" 
-                              f"{len(self.dates1):6d} {self.name1:14s} {len(self.dates2):6d} {self.name2:14s} "
-                              f"{eop / h:7.3f}")
+                        self.print_line(z, h, pa, str(d), roc, eop)
                         sys.stdout.flush()
 
     def too_slow_or_too_seasonal(self, eop: float, h: int) -> bool:
@@ -412,7 +410,9 @@ def main():
                 break
             path2 = paths[i + delta]
             if sizes_are_ok(len(dates[path1]), len(dates[path2]), args):
-                comp = Comparison(args, path1.name, dates[path1], path2.name, dates[path2])
+                identifier = f"{i},{delta}"
+                print(f"# Comparison {identifier} = {path1}({len(dates[path1])}) {path2}({len(dates[path2])})")
+                comp = Comparison(args, dates[path1], dates[path2], identifier)
                 comp.run()
 
 
