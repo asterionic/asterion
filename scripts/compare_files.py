@@ -53,34 +53,43 @@ ORBITAL_PERIOD: Dict[int, float] = dict((t[0], t[3]) for t in PLANET_DATA)
 ABBREV: Dict[int, str] = dict((t[0], t[2]) for t in PLANET_DATA)
 
 
-def get_paths_and_dates(files: List[str]) -> Tuple[List[Path], Dict[Path, np.ndarray]]:
+def get_paths_and_dates(args: argparse.Namespace) -> Tuple[List[Path], Dict[Path, np.ndarray]]:
     """
-    :param files: a list of file paths; each should be a csv file containing data expected by get_dates
+    :param args: see create_parser
     :return: paths: a list of Path objects, one for each file, ordered by decreasing number of successfully
     extracted dates in the file; and dates: a dictionary from paths to arrays of day values.
     """
-    paths = [Path(f) for f in files]
-    dates = dict((p, get_dates(p)) for p in paths)
+    paths = [Path(f) for f in args.files]
+    dates = dict((p, get_dates(p, args)) for p in paths)
     paths.sort(key=lambda p: len(dates[p]), reverse=True)
     return paths, dates
 
 
-def get_dates(path: Path):
+def get_dates(path: Path, args: argparse.Namespace):
     """
     :param path: a csv file, assumed to contain a date in the last column of each row.
-    The date should be in the form yyyy-mm-dd. We keep dates in 1800 or later, as earlier
-    dates may be inaccurate or use a different calendar. We assume there is no time information,
+    The date should be in the form yyyy-mm-dd. We assume there is no time information,
     so we set the time to a random number of hours between 0 and 24.
     :return: an array of "Julian" (actually Gregorian) day values, one for each date in the file.
     """
     dates = []
+    keep_first_days = args.keep_first_days
+    min_year = args.min_year
+    max_year = args.max_year
+    default_to_noon = args.default_to_noon
     with path.open() as inp:
         for row in csv.reader(inp):
             try:
                 day = row[-1]
-                y, m, d = day.split("-")
-                if int(y) > 1800 and int(m) > 0 and int(d) > 0:
-                    dates.append(swe.julday(int(y), int(m), int(d), 24.0 * random()))
+                y, m, d = [int(n) for n in day.split("-")]
+                if y < min_year or y > max_year:
+                    continue  # year outside the range we want
+                if m <= 0 or d <= 0 or m > 12 or d > 31:
+                    continue  # invalid month or day value
+                if d == 1 and keep_first_days < 2 and (m == 1 or keep_first_days == 0):
+                    continue  # first day of month; discard if January (if keep_first_days == 1) or always (if 2)
+                hour = 12.0 if default_to_noon else 24.0 * random()
+                dates.append(swe.julday(y, m, d, hour))
             except IndexError:  # not all rows may be of the expected format
                 pass
     return np.array(dates)
@@ -117,9 +126,8 @@ class Comparison:
                     self.compare_planet_pair(h, pa, pb, eop_ab, null_sd)
                 # Calculate statistics line(s) for position of pa itself.
                 eop_a = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
-                if not self.too_slow_or_too_seasonal(eop_a, h):
-                    self.calculate_and_print_difference_vector(h, pa, eop_a)
-                    self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
+                self.calculate_and_print_difference_vector(h, pa, eop_a)
+                self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
 
     def year_buckets(self, dates):
         days_in_year = 365.2422
@@ -222,8 +230,10 @@ class Comparison:
         # the effective orbital period is the inverse of that.
         return op1 * op2 / abs(op1 - op2)
 
-    def print_line(self, z, h, pa, b_str, value, eop):
-        print(f"{abs(z):9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {value:8.6f} {eop / h:7.3f} {self.identifier}")
+    def print_line(self, line_type, z, h, pa, b_str, value, eop):
+        ast = "*" if self.too_slow_or_too_seasonal(eop, h) else " "
+        print(f"{line_type:s}{ast} {abs(z):9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {value:8.6f}"
+              f"{eop / h:10.3f} {self.identifier}")
         sys.stdout.flush()
 
     def planets_to_pair_with(self, p1: int, h: int) -> List[Tuple[int, float]]:
@@ -231,8 +241,7 @@ class Comparison:
         for p2 in self.planets_to_use:
             if p2 > p1:
                 eop = self.effective_orbital_period(p1, p2)
-                if not self.too_slow_or_too_seasonal(eop, h):
-                    result.append((p2, eop))
+                result.append((p2, eop))
         return result
 
     def calculate_and_print_difference_vector(self, h, pa, eop_a):
@@ -245,7 +254,7 @@ class Comparison:
         # Statistics line: z value, harmonic, two-letter abbreviation for first planet, angle (in degrees) and
         # magnitude of centroid, size and name of first dataset, size and name of second dataset, effective
         # orbital period of the harmonic of the planet.
-        self.print_line(diff_z, h, pa, str(int(0.5 + angle * 180 / math.pi)), magnitude, eop_a)
+        self.print_line("V", diff_z, h, pa, str(int(0.5 + angle * 180 / math.pi)), magnitude, eop_a)
 
     def calculate_rocs_for_angles(self, h, pa, eop_a, null_sd):
         # If degree_step is positive, we calculate the roc value for the cosines of all the positions of pa
@@ -257,12 +266,12 @@ class Comparison:
         # don't need full circle because cos is antisymmetric:
         for d in range(0, 180, self.args.degree_step):
             dr = d * math.pi / 180
-            roc = self.calculate_roc(dr, h, self.rads1_dct[pa], self.rads2_dct[pa])
+            roc = self.calculate_roc_from_cosines(dr, h, self.rads1_dct[pa], self.rads2_dct[pa])
             z = (roc - 0.5) / null_sd
             # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
             # ROC value, size and name of first dataset, size and name of second dataset, effective
             # orbital period of the harmonic of the planet.
-            self.print_line(z, h, pa, str(d), roc, eop_a)
+            self.print_line("D", z, h, pa, str(d), roc, eop_a)
             sys.stdout.flush()
 
     def calculate_mean_difference(self, h, p):
@@ -282,7 +291,7 @@ class Comparison:
         rads2_diff = self.rads2_dct[pa] - self.rads2_dct[pb]
         # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
         # p_values = scipy.stats.norm.sf(abs(z_scores))*2 #twosided
-        roc = self.calculate_roc(0.0, h, rads1_diff, rads2_diff)
+        roc = self.calculate_roc_from_cosines(0.0, h, rads1_diff, rads2_diff)
         # z value is number of standard deviations by which roc deviates from 0.5, given an estimated
         # standard deviation null_sd.
         z = (roc - 0.5) / null_sd
@@ -291,7 +300,7 @@ class Comparison:
         # dataset, and effective orbital period of the difference angle when multiplied by the harmonic.
         # If this last value is big (enough years for generational effects to be relevant) or close to 1.0
         # (so seasonal effects may be relevant) then treat the z value with scepticism.
-        self.print_line(z, h, pa, ABBREV[pb], roc, eop_ab)
+        self.print_line("A", z, h, pa, ABBREV[pb], roc, eop_ab)
         sys.stdout.flush()
 
     def look_up_planet_positions(self):
@@ -302,15 +311,18 @@ class Comparison:
 
     def too_slow_or_too_seasonal(self, eop: float, h: int) -> bool:
         """
-        :param eop: effective orbital period of some quantity
+        :param eop: effective orbital period of some quantity (without considering harmonic)
         :param h: harmonic
-        :return: true if eop is greater than max_orbit, or is closer to 1 than 1/max_orbit.
-        Thus higher values of max_orbit mean more tolerance.
-        Example: max_orbit = 10 means eop = 9 is OK but 11 is not; and
-        eop = 1.11 is OK but eop = 1.09 is not.
+        :return: True in two cases:
+          (1) too slow: EOP of harmonic (eop_h) is basic eop divided by harmonic number.
+              This has to be at most max_orbit.
+          (2) too seasonal: eop_h cannot be too close to 1. If its integer part is closer to 1 than 1 / max_orbit,
+              then it will take more than max_orbit years for the position at any fixed time of year to cycle
+              around the zodiac.
         """
-        effective_max_orbit = h * self.args.max_orbit
-        return eop > effective_max_orbit or abs(eop - 1) < 1 / effective_max_orbit
+        max_orbit = self.args.max_orbit
+        eop_h = eop / h
+        return eop_h > max_orbit or abs(eop_h - 1) < 1 / max_orbit
 
     @staticmethod
     def calculate_planet_radians(dates1, p, rads1_dct):
@@ -332,7 +344,7 @@ class Comparison:
         self.dates1, self.dates2 = dates12[:len(self.dates1)], dates12[len(self.dates1):]
 
     @staticmethod
-    def calculate_roc(dr, h, rads1, rads2) -> float:
+    def calculate_roc_from_cosines(dr, h, rads1, rads2) -> float:
         """
         Returns the ROC (Receiver Operating Characteristic) or AUC (Area Under Curve) value for the given datasets.
         :param dr: value to add to each angle before taking cosine.
@@ -341,32 +353,36 @@ class Comparison:
         :param rads2: values in set 2, in radians.
         :return: ROC value for set 2 vs set 1 (will be > 0.5 if set 2 mostly has higher values).
         """
-        # Cosine of each angle in rads1 multiplied by h, paired with constant 1.
-        pairs1 = Comparison.cosine_pairs(dr, h, rads1, 1)
-        # Cosine of each angle in rads2 multiplied by h, paired with constant 2.
-        pairs2 = Comparison.cosine_pairs(dr, h, rads2, 2)
-        # Pairs in order, from lowest (most negative) cosine to highest.
-        sorted_pairs = sorted(pairs1 + pairs2)
+        # Cosine of each angle in rads1 multiplied by h
+        values1 = Comparison.cosine_values(dr, h, rads1)
+        # Cosine of each angle in rads2 multiplied by h
+        values2 = Comparison.cosine_values(dr, h, rads2)
+        return Comparison.calculate_roc(values1, values2)
+
+    @staticmethod
+    def calculate_roc(values1, values2):
+        # Pairs in order, from lowest (most negative) value to highest.
+        sorted_pairs = sorted([(v, 1) for v in values1] + [(v, 2) for v in values2])
         # Number of pairs we've seen so far with 1 in second position. At the end of sorted_pairs, this will be
-        # len(rads1).
+        # len(values1).
         n1 = 0
         # Sum of values of n1 when we encounter a pair with 2 in second position. At the end of sorted_pairs, this will
-        # be the number of pairs with one member from each of rads1 and rads2, such that the cosine value of the rads1
-        # item is less than that of the rads2 item.
+        # be the number of pairs with one member from each of values1 and values2, such that the cosine value of the
+        # values1 item is less than that of the values2 item.
         n12 = 0
         for _, c in sorted_pairs:
             if c == 1:
                 n1 += 1
             else:
                 n12 += n1
-        # n1 * len(rads2) is the total number of pairs we can make from rads1 and rads2. So n12 over that value is the
-        # proportion of pairs with the rads1 value less than the rads2 value. If the two sets are from the same
-        # distribution the expected value of this is 0.5.
-        return n12 / (n1 * len(rads2))
+        # n1 * len(values2) is the total number of pairs we can make from values1 and values2. So n12 over that value
+        # is the proportion of pairs with the values1 value less than the values2 value. If the two sets are from the
+        # same distribution the expected value of this is 0.5.
+        return n12 / (n1 * len(values2))
 
     @staticmethod
-    def cosine_pairs(dr, h, rads, idx):
-        return [(math.cos(h * rad + dr), idx) for rad in rads]
+    def cosine_values(dr, h, rads):
+        return [math.cos(h * rad + dr) for rad in rads]
 
     @staticmethod
     def radian_positions(dates1, p):
@@ -392,6 +408,13 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--min_dataset_size", type=int, default=100)
     parser.add_argument("--pairs_first", action="store_true", default=False)
     parser.add_argument("--shuffle", action="store_true", default=False)
+    # 0: discard all first-of-month dates. 1: discard January 1st only. 2: discard none.
+    parser.add_argument("--keep_first_days", type=int, default=0)
+    # By default, we only keep dates of 1800 or later, as earlier dates may be inaccurate or use a different calendar.
+    parser.add_argument("--min_year", type=int, default=1800)
+    parser.add_argument("--max_year", type=int, default=2200)
+    # Whether to set the time for each day to noon, as opposed to choosing a uniform random time.
+    parser.add_argument("--default_to_noon", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
     log_arguments(args)
@@ -407,7 +430,7 @@ def log_arguments(args):
 
 def main():
     args = parse_arguments()
-    paths, dates = get_paths_and_dates(args.files)
+    paths, dates = get_paths_and_dates(args)
     for delta1 in range(1, len(paths)):
         delta = 3 - delta1 if args.pairs_first and delta1 < 3 else delta1
         for i, path1 in enumerate(paths):
@@ -415,7 +438,7 @@ def main():
                 break
             path2 = paths[i + delta]
             if sizes_are_ok(len(dates[path1]), len(dates[path2]), args):
-                identifier = f"{i},{delta}"
+                identifier = f"{i},{i + delta}"
                 print(f"# Comparison {identifier} = {path1}({len(dates[path1])}) {path2}({len(dates[path2])})")
                 comp = Comparison(args, dates[path1], dates[path2], identifier)
                 comp.run()
