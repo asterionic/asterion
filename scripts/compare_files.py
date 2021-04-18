@@ -47,10 +47,10 @@ PLANET_DATA = [
     (20, "Vesta", "Vs", 3.63),
 ]
 
-PLANETS = [t[0] for t in PLANET_DATA]
-PLANET_NAME = dict((t[0], t[1]) for t in PLANET_DATA)
-ORBITAL_PERIOD = dict((t[0], t[3]) for t in PLANET_DATA)
-ABBREV = dict((t[0], t[2]) for t in PLANET_DATA)
+PLANETS: List[int] = [t[0] for t in PLANET_DATA]
+PLANET_NAME: Dict[int, str] = dict((t[0], t[1]) for t in PLANET_DATA)
+ORBITAL_PERIOD: Dict[int, float] = dict((t[0], t[3]) for t in PLANET_DATA)
+ABBREV: Dict[int, str] = dict((t[0], t[2]) for t in PLANET_DATA)
 
 
 def get_paths_and_dates(files: List[str]) -> Tuple[List[Path], Dict[Path, np.ndarray]]:
@@ -202,8 +202,17 @@ class Comparison:
         return op1 * op2 / abs(op1 - op2)
 
     def print_line(self, z, h, pa, b_str, roc, eop):
-        print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {roc:8.6f} "
-              f"{eop / h:7.3f} {self.identifier}")
+        print(f"{z:9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {roc:8.6f} {eop / h:7.3f} {self.identifier}")
+        sys.stdout.flush()
+
+    def planets_to_pair_with(self, p1: int, h: int) -> List[Tuple[int, float]]:
+        result = []
+        for p2 in self.planets_to_use:
+            if p2 > p1:
+                eop = self.effective_orbital_period(p1, p2)
+                if not self.too_slow_or_too_seasonal(eop, h):
+                    result.append((p2, eop))
+        return result
 
     def run(self):
         # If time buckets (by numbers of years and/or time of year) were specified, we prune the data accordingly.
@@ -214,86 +223,83 @@ class Comparison:
         if self.args.shuffle:
             self.shuffle_dates_between_categories()
         null_sd = self.null_hypothesis_roc_standard_deviation(len(self.dates1), len(self.dates2))
+        self.look_up_planet_positions()
         for h in range(self.args.min_harmonic, self.args.max_harmonic + 1):
-            # hc = HarmonicComparison(self.args, self.rads1_dct, self.rads2_dct, self.planets_to_use,
-            #                         self.name1, self.name2)
-            # Dictionary from planet numbers to the mean (centroid) of the positions of that planet
-            # on dates in dates1, treating the zodiac as a unit circle.
-            means1_dct = {}
-            # Ditto for dates2.
-            means2_dct = {}
-            for ia, pa in enumerate(self.planets_to_use):
-                if pa not in self.rads1_dct:
-                    # Fill rads1_dct and rads2_dct for planet pa.
-                    self.calculate_planet_radians(self.dates1, pa, self.rads1_dct)
-                    self.calculate_planet_radians(self.dates2, pa, self.rads2_dct)
-                if pa not in means1_dct:
-                    # Fill means1_dct and means2_dct for planet pa.
-                    means1_dct[pa] = self.calculate_mean_positions(self.rads1_dct[pa] * h)
-                    means2_dct[pa] = self.calculate_mean_positions(self.rads2_dct[pa] * h)
+            for pa in self.planets_to_use:
                 # Calculate statistics line for difference between position of pa and every later planet.
-                for pb in self.planets_to_use[ia + 1:]:
-                    # Effective period for the angle between planets pa and pb.
-                    eop = self.effective_orbital_period(pa, pb)
-                    if self.too_slow_or_too_seasonal(eop, h):
-                        # The angle moves slowly enough that generational effects may be the cause of any
-                        # non-randomness, or its period is close enough to 1 year that seasonality may be the cause.
-                        continue
-                    if pb not in self.rads1_dct:
-                        # Fill rads1_dct and rads2_dct for planet pb.
-                        self.calculate_planet_radians(self.dates1, pb, self.rads1_dct)
-                        self.calculate_planet_radians(self.dates2, pb, self.rads2_dct)
-                    # Differences between positions of planets pa and pb, over all entries in rads1_dct (first dataset).
-                    rads1_diff = self.rads1_dct[pa] - self.rads1_dct[pb]
-                    # Ditto for rads2_dct (second dataset).
-                    rads2_diff = self.rads2_dct[pa] - self.rads2_dct[pb]
-                    # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
-                    # p_values = scipy.stats.norm.sf(abs(z_scores))*2 #twosided
-                    roc = self.calculate_roc(0.0, h, rads1_diff, rads2_diff)
-                    # z value is number of standard deviations by which roc deviates from 0.5, given an estimated
-                    # standard deviation null_sd.
-                    z = (roc - 0.5) / null_sd
-                    # Fields in this line: z value, harmonic number, two-letter abbreviations for the two planets,
-                    # roc value, number of entries and name of first dataset, number of entries and name of second
-                    # dataset, and effective orbital period of the difference angle when multiplied by the harmonic.
-                    # If this last value is big (enough years for generational effects to be relevant) or close to 1.0
-                    # (so seasonal effects may be relevant) then treat the z value with scepticism.
-                    self.print_line(z, h, pa, ABBREV[pb], roc, eop)
-                    sys.stdout.flush()
+                for pb, eop_ab in self.planets_to_pair_with(pa, h):
+                    self.compare_planet_pair(h, pa, pb, eop_ab, null_sd)
                 # Calculate statistics line(s) for position of pa itself.
-                eop = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
-                if self.too_slow_or_too_seasonal(eop, h):
-                    continue
-                # Vector (in (x,y) coordinate space) for difference between means of the two sets. This will be
-                # somewhere inside the unit circle, usually very near the centre.
-                vector = means2_dct[pa] - means1_dct[pa]
-                # Convert (x,y) to polar coordinates.
-                vcomp = complex(vector[0], vector[1])
-                magnitude, angle = cmath.polar(vcomp)  # type: ignore
-                # Estimate diff_sd, the standard deviation for vector, under the null hypothesis that the two datasets
-                # are from the same distribution. The expected value is (0,0).
-                data = np.concatenate([self.rads1_dct[pa], self.rads2_dct[pa]])
-                diff_var = (np.var(np.cos(data)) + np.var(np.sin(data))) * (1 / len(self.dates1) + 1 / len(self.dates2))
-                diff_z = magnitude / np.sqrt(diff_var)
-                # Statistics line: z value, harmonic, two-letter abbreviation for first planet, angle (in degrees) and
-                # magnitude of centroid, size and name of first dataset, size and name of second dataset, effective
-                # orbital period of the harmonic of the planet.
-                self.print_line(diff_z, h, pa, str(int(0.5+angle*180/math.pi)), magnitude, eop)
-                # If degree_step is positive, we calculate the roc value for the cosines of all the positions of pa
-                # over the two datasets, taking 0, degree_step, 2 * degree_step ... 180 as the origin for the cosines.
-                # This is a (probably inferior) alternative to mean differences. Evaluating z is extra tricky in this
-                # case!
-                if self.args.degree_step > 0:
-                    # don't need full circle because cos is antisymmetric:
-                    for d in range(0, 180, self.args.degree_step):
-                        dr = d * math.pi / 180
-                        roc = self.calculate_roc(dr, h, self.rads1_dct[pa], self.rads2_dct[pa])
-                        z = (roc - 0.5) / null_sd
-                        # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
-                        # ROC value, size and name of first dataset, size and name of second dataset, effective
-                        # orbital period of the harmonic of the planet.
-                        self.print_line(z, h, pa, str(d), roc, eop)
-                        sys.stdout.flush()
+                eop_a = ORBITAL_PERIOD[SUN if pa in [MERCURY, VENUS] else pa]
+                if not self.too_slow_or_too_seasonal(eop_a, h):
+                    self.calculate_and_print_difference_vector(h, pa, eop_a)
+                    self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
+
+    def calculate_and_print_difference_vector(self, h, pa, eop_a):
+        magnitude, angle = self.calculate_mean_difference(h, pa)
+        # Estimate diff_sd, the standard deviation for vector, under the null hypothesis that the two datasets
+        # are from the same distribution. The expected value is (0,0).
+        data = np.concatenate([self.rads1_dct[pa], self.rads2_dct[pa]])
+        diff_var = (np.var(np.cos(data)) + np.var(np.sin(data))) * (1 / len(self.dates1) + 1 / len(self.dates2))
+        diff_z = magnitude / np.sqrt(diff_var)
+        # Statistics line: z value, harmonic, two-letter abbreviation for first planet, angle (in degrees) and
+        # magnitude of centroid, size and name of first dataset, size and name of second dataset, effective
+        # orbital period of the harmonic of the planet.
+        self.print_line(diff_z, h, pa, str(int(0.5 + angle * 180 / math.pi)), magnitude, eop_a)
+
+    def calculate_rocs_for_angles(self, h, pa, eop_a, null_sd):
+        # If degree_step is positive, we calculate the roc value for the cosines of all the positions of pa
+        # over the two datasets, taking 0, degree_step, 2 * degree_step ... 180 as the origin for the cosines.
+        # This is a (probably inferior) alternative to mean differences. Evaluating z is extra tricky in this
+        # case!
+        if self.args.degree_step <= 0:
+            return
+        # don't need full circle because cos is antisymmetric:
+        for d in range(0, 180, self.args.degree_step):
+            dr = d * math.pi / 180
+            roc = self.calculate_roc(dr, h, self.rads1_dct[pa], self.rads2_dct[pa])
+            z = (roc - 0.5) / null_sd
+            # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
+            # ROC value, size and name of first dataset, size and name of second dataset, effective
+            # orbital period of the harmonic of the planet.
+            self.print_line(z, h, pa, str(d), roc, eop_a)
+            sys.stdout.flush()
+
+    def calculate_mean_difference(self, h, p):
+        # Vector (in (x,y) coordinate space) for difference between the mean (centroid) of the positions of
+        # that planet on dates in dates2, minus the same on dates1, treating the zodiac as a unit circle.
+        mean1 = self.calculate_mean_positions(self.rads1_dct[p] * h)
+        mean2 = self.calculate_mean_positions(self.rads2_dct[p] * h)
+        vector = mean2 - mean1
+        # Convert (x,y) to polar coordinates.
+        vcomp = complex(vector[0], vector[1])
+        magnitude, angle = cmath.polar(vcomp)  # type: ignore
+        return magnitude, angle
+
+    def compare_planet_pair(self, h, pa, pb, eop_ab, null_sd):
+        # Differences between positions of planets pa and pb, over all entries in rads1_dct (first dataset).
+        rads1_diff = self.rads1_dct[pa] - self.rads1_dct[pb]
+        # Ditto for rads2_dct (second dataset).
+        rads2_diff = self.rads2_dct[pa] - self.rads2_dct[pb]
+        # p_values = scipy.stats.norm.sf(abs(z_scores)) #one-sided
+        # p_values = scipy.stats.norm.sf(abs(z_scores))*2 #twosided
+        roc = self.calculate_roc(0.0, h, rads1_diff, rads2_diff)
+        # z value is number of standard deviations by which roc deviates from 0.5, given an estimated
+        # standard deviation null_sd.
+        z = (roc - 0.5) / null_sd
+        # Fields in this line: z value, harmonic number, two-letter abbreviations for the two planets,
+        # roc value, number of entries and name of first dataset, number of entries and name of second
+        # dataset, and effective orbital period of the difference angle when multiplied by the harmonic.
+        # If this last value is big (enough years for generational effects to be relevant) or close to 1.0
+        # (so seasonal effects may be relevant) then treat the z value with scepticism.
+        self.print_line(z, h, pa, ABBREV[pb], roc, eop_ab)
+        sys.stdout.flush()
+
+    def look_up_planet_positions(self):
+        for p in self.planets_to_use:
+            # Fill rads1_dct and rads2_dct for planet p.
+            self.calculate_planet_radians(self.dates1, p, self.rads1_dct)
+            self.calculate_planet_radians(self.dates2, p, self.rads2_dct)
 
     def too_slow_or_too_seasonal(self, eop: float, h: int) -> bool:
         """
