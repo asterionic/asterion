@@ -15,6 +15,8 @@ import swisseph as swe
 import roc_sd
 from roc_estimates import ROC_SD
 
+DAYS_IN_YEAR = 365.2422
+
 swe.set_ephe_path("/home/dmc/astrolog/astephem")
 
 SUN = 0
@@ -118,6 +120,7 @@ class Comparison:
         if self.args.shuffle:
             self.shuffle_dates_between_categories()
         null_sd = self.null_hypothesis_roc_standard_deviation(len(self.dates1), len(self.dates2))
+        self.calculate_linear_roc(null_sd)
         self.look_up_planet_positions()
         for h in range(self.args.min_harmonic, self.args.max_harmonic + 1):
             for pa in self.planets_to_use:
@@ -129,12 +132,26 @@ class Comparison:
                 self.calculate_and_print_difference_vector(h, pa, eop_a)
                 self.calculate_rocs_for_angles(h, pa, eop_a, null_sd)
 
+    def calculate_linear_roc(self, null_sd: float):
+        diff = np.mean(self.dates2) - np.mean(self.dates1)
+        std1 = np.std(self.dates1)
+        std2 = np.std(self.dates2)
+        print(f"# Difference in means, set 2 - set 1: {diff / DAYS_IN_YEAR:5.3f} years")
+        print(f"# Standard deviations: {std1 / DAYS_IN_YEAR:5.3f} years (set 1) "
+              f"and {std2 / DAYS_IN_YEAR:5.3f} years (set 2)")
+        roc = Comparison.calculate_roc(self.dates1, self.dates2)
+        z = (roc - 0.5) / null_sd
+        # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
+        # ROC value, size and name of first dataset, size and name of second dataset, effective
+        # orbital period of the harmonic of the planet.
+        self.print_line("L", z, 1, -1, "Ln", roc, 0.0)
+        sys.stdout.flush()
+
     def year_buckets(self, dates):
-        days_in_year = 365.2422
         zero_date = swe.julday(1900, 1, 1)
         buckets = collections.defaultdict(list)
         for date in dates:
-            diff = (date - zero_date) / (self.args.match_by_years * days_in_year)
+            diff = (date - zero_date) / (self.args.match_by_years * DAYS_IN_YEAR)
             if diff < 0:
                 bucket = -(int(-diff) + 1)
             else:
@@ -143,11 +160,10 @@ class Comparison:
         return buckets
 
     def month_buckets(self, dates):
-        days_in_year = 365.2422
         zero_date = swe.julday(1900, 1, 1)
         buckets = collections.defaultdict(list)
         for date in dates:
-            year_fraction = (date - zero_date) / days_in_year + 1000
+            year_fraction = (date - zero_date) / DAYS_IN_YEAR + 1000
             year_fraction -= int(year_fraction)
             bucket = int(year_fraction * 12 / self.args.match_by_months)
             buckets[bucket].append(date)
@@ -232,7 +248,7 @@ class Comparison:
 
     def print_line(self, line_type, z, h, pa, b_str, value, eop):
         ast = "*" if self.too_slow_or_too_seasonal(eop, h) else " "
-        print(f"{line_type:s}{ast} {abs(z):9.5f} {h:2d} {ABBREV[pa]:2s} {b_str:4s} {value:8.6f}"
+        print(f"{line_type:s}{ast} {abs(z):9.5f} {h:2d} {ABBREV.get(pa, 'Xx'):2s} {b_str:4s} {value:8.6f}"
               f"{eop / h:10.3f} {self.identifier}")
         sys.stdout.flush()
 
