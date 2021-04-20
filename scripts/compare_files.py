@@ -67,6 +67,12 @@ def get_paths_and_dates(args: argparse.Namespace) -> Tuple[List[Path], Dict[Path
     return paths, dates
 
 
+def is_leap_year(y):
+    if y % 100 == 0:
+        y = int(y / 100)
+    return y % 4 == 0
+
+
 def get_dates(path: Path, args: argparse.Namespace):
     """
     :param path: a csv file, assumed to contain a date in the last column of each row.
@@ -78,7 +84,10 @@ def get_dates(path: Path, args: argparse.Namespace):
     keep_first_days = args.keep_first_days
     min_year = args.min_year
     max_year = args.max_year
+    flatten = args.flatten_by_day
     default_to_noon = args.default_to_noon
+    date_years = collections.defaultdict(list)
+    max_day = [None, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]  # reject all February 29
     with path.open() as inp:
         for row in csv.reader(inp):
             try:
@@ -86,14 +95,29 @@ def get_dates(path: Path, args: argparse.Namespace):
                 y, m, d = [int(n) for n in day.split("-")]
                 if y < min_year or y > max_year:
                     continue  # year outside the range we want
-                if m <= 0 or d <= 0 or m > 12 or d > 31:
+                if m <= 0 or d <= 0 or m > 12 or d > max_day[m]:
                     continue  # invalid month or day value
+                if (m, d) == (2, 29) and (flatten or not is_leap_year(y)):
+                    continue  # don't want Feb 29 if flattening, or if it's not a leap year
                 if d == 1 and keep_first_days < 2 and (m == 1 or keep_first_days == 0):
                     continue  # first day of month; discard if January (if keep_first_days == 1) or always (if 2)
-                hour = 12.0 if default_to_noon else 24.0 * random()
-                dates.append(swe.julday(y, m, d, hour))
+                date_years[(m, d)].append(y)
             except IndexError:  # not all rows may be of the expected format
                 pass
+    if flatten:
+        counts = [len(lst) for lst in date_years.values()]
+        min_count = min(counts)
+    else:
+        min_count = 0
+    for (m, d), y_list in date_years.items():
+        if flatten:
+            y_list = y_list[:min_count]
+        for y in y_list:
+            hour = 12.0 if default_to_noon else 24.0 * random()
+            dates.append(swe.julday(y, m, d, hour))
+    if flatten:
+        print(f"# Equalizing by day of year reduces count from {sum(counts)} to " 
+              f"{len(date_years)}*{min_count}={len(dates)} for {path}")
     return np.array(dates)
 
 
@@ -356,7 +380,7 @@ class Comparison:
 
     def shuffle_dates_between_categories(self) -> None:
         dates12 = np.concatenate([self.dates1, self.dates2])
-        np.shuffle(dates12)
+        shuffle(dates12)
         self.dates1, self.dates2 = dates12[:len(self.dates1)], dates12[len(self.dates1):]
 
     @staticmethod
@@ -431,6 +455,7 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max_year", type=int, default=2200)
     # Whether to set the time for each day to noon, as opposed to choosing a uniform random time.
     parser.add_argument("--default_to_noon", action="store_true", default=False)
+    parser.add_argument("--flatten_by_day", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
     log_arguments(args)
