@@ -159,13 +159,13 @@ class Comparison:
             buckets[bucket].append(date)
         return buckets
 
-    def month_buckets(self, dates):
+    def day_buckets(self, dates):
         zero_date = swe.julday(1900, 1, 1)
         buckets = collections.defaultdict(list)
         for date in dates:
             year_fraction = (date - zero_date) / DAYS_IN_YEAR + 1000
             year_fraction -= int(year_fraction)
-            bucket = int(year_fraction * 12 / self.args.match_by_months)
+            bucket = int(year_fraction * DAYS_IN_YEAR / self.args.match_by_days)
             buckets[bucket].append(date)
         return buckets
 
@@ -177,12 +177,12 @@ class Comparison:
             self.dates1, self.dates2 = self.apply_buckets(buckets1, buckets2, len1, len2)
             print(f"# With  year bucket size = {self.args.match_by_years:2d}, "
                   f"reduced counts from {len1:6d} and {len2:6d} to {len(self.dates1):6d} and {len(self.dates2):6d}")
-        if self.args.match_by_months > 0:
+        if self.args.match_by_days > 0:
             len1, len2 = len(self.dates1), len(self.dates2)
-            buckets1 = self.month_buckets(self.dates1)
-            buckets2 = self.month_buckets(self.dates2)
+            buckets1 = self.day_buckets(self.dates1)
+            buckets2 = self.day_buckets(self.dates2)
             self.dates1, self.dates2 = self.apply_buckets(buckets1, buckets2, len1, len2)
-            print(f"# With month bucket size = {self.args.match_by_months:2d}, " 
+            print(f"# With month bucket size = {self.args.match_by_days:2d}, " 
                   f"reduced counts from {len1:6d} and {len2:6d} to {len(self.dates1):6d} and {len(self.dates2):6d}")
 
     @staticmethod
@@ -420,7 +420,7 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max_orbit", type=float, default=5)
     parser.add_argument("--min_harmonic", type=int, default=1)
     parser.add_argument("--match_by_years", type=int, default=0)
-    parser.add_argument("--match_by_months", type=int, default=0)
+    parser.add_argument("--match_by_days", type=int, default=0)
     parser.add_argument("--min_dataset_size", type=int, default=100)
     parser.add_argument("--pairs_first", action="store_true", default=False)
     parser.add_argument("--shuffle", action="store_true", default=False)
