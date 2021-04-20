@@ -369,7 +369,7 @@ class Comparison:
         """
         max_orbit = self.args.max_orbit
         eop_h = eop / h
-        return eop_h > max_orbit or abs(eop_h - 1) < 1 / max_orbit
+        return eop_h > max_orbit or (self.args.match_by_days == 0 and abs(eop_h - 1) < 1 / max_orbit)
 
     @staticmethod
     def calculate_planet_radians(dates1, p, rads1_dct):
