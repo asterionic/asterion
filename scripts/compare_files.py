@@ -455,6 +455,7 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--max_year", type=int, default=2200)
     # Whether to set the time for each day to noon, as opposed to choosing a uniform random time.
     parser.add_argument("--default_to_noon", action="store_true", default=False)
+    # Whether to discard instances so we have exactly the same number of instances for each day of the year
     parser.add_argument("--flatten_by_day", action="store_true", default=False)
     parser.add_argument("files", nargs="*")
     args = parser.parse_args()
