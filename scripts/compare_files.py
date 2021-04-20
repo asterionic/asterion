@@ -446,7 +446,7 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(args)
     parser.add_argument("--max_size_ratio", type=float, default=5.0)
     parser.add_argument("--max_planet", type=int, default=20)
-    parser.add_argument("--max_harmonic", type=int, default=11)
+    parser.add_argument("--max_harmonic", type=int, default=32)
     parser.add_argument("--degree_step", type=int, default=0)
     parser.add_argument("--max_orbit", type=float, default=5)
     parser.add_argument("--min_harmonic", type=int, default=1)
