@@ -15,7 +15,7 @@ import swisseph as swe
 import roc_sd
 from roc_estimates import ROC_SD
 
-DAYS_IN_YEAR = 365.2422
+DAYS_IN_YEAR = (swe.julday(2300, 1, 1) - swe.julday(1900, 1, 1)) / 400
 
 swe.set_ephe_path("/home/dmc/astrolog/astephem")
 
@@ -186,11 +186,18 @@ class Comparison:
     def day_buckets(self, dates):
         zero_date = swe.julday(1900, 1, 1)
         buckets = collections.defaultdict(list)
-        for date in dates:
-            year_fraction = (date - zero_date) / DAYS_IN_YEAR + 1000
-            year_fraction -= int(year_fraction)
-            bucket = int(year_fraction * DAYS_IN_YEAR / self.args.match_by_days)
-            buckets[bucket].append(date)
+        if self.args.match_by_days == 1:
+            # Recover the calendar day for extra accuracy
+            for date in dates:
+                _, m, d, _ = swe.revjul(date)
+                bucket = (m, d)
+                buckets[bucket].append(date)
+        else:
+            for date in dates:
+                year_fraction = (date - zero_date) / DAYS_IN_YEAR + 1000
+                year_fraction -= int(year_fraction)
+                bucket = int(year_fraction * DAYS_IN_YEAR / self.args.match_by_days)
+                buckets[bucket].append(date)
         return buckets
 
     def match_by_time_buckets(self) -> None:
