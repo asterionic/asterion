@@ -37,15 +37,15 @@ PLANET_DATA = [
     (4, "Mars", "Ma", 1.88),
     (5, "Jupiter", "Jp", 11.83),
     (6, "Saturn", "Sa", 29.46),
-    (7, "Uranus", "Ur", 84),
-    (8, "Neptune", "Ne", 165),
-    (9, "Pluto", "Pl", 248),
+    (7, "Uranus", "Ur", 84.02),
+    (8, "Neptune", "Ne", 164.8),
+    (9, "Pluto", "Pl", 247.94),
     (11, "Node", "Nd", 18.6),
-    (15, "Chiron", "Ch", 50),
-    (16, "Pholus", "Ph", 92),
-    (17, "Ceres", "Ce", 4.6),
+    (15, "Chiron", "Ch", 50.42),
+    (16, "Pholus", "Ph", 91.85),
+    (17, "Ceres", "Ce", 4.605),
     (18, "Pallas", "Pa", 4.62),
-    (19, "Juno", "Jn", 4.36),
+    (19, "Juno", "Jn", 4.366),
     (20, "Vesta", "Vs", 3.63),
 ]
 
@@ -111,6 +111,7 @@ def get_dates(path: Path, args: argparse.Namespace):
         min_count = 0
     for (m, d), y_list in date_years.items():
         if flatten:
+            shuffle(y_list)
             y_list = y_list[:min_count]
         for y in y_list:
             hour = 12.0 if default_to_noon else 24.0 * random()
@@ -165,10 +166,7 @@ class Comparison:
               f"and {std2 / DAYS_IN_YEAR:5.3f} years (set 2)")
         roc = Comparison.calculate_roc(self.dates1, self.dates2)
         z = (roc - 0.5) / null_sd
-        # Statistics line: z value, harmonic, two-letter abbreviation for the planet, degree value,
-        # ROC value, size and name of first dataset, size and name of second dataset, effective
-        # orbital period of the harmonic of the planet.
-        self.print_line("L", z, 1, -1, "Ln", roc, 0.0)
+        self.print_line("L", z, 1, -1, "Ln", roc, 1.0)
         sys.stdout.flush()
 
     def year_buckets(self, dates):
@@ -453,7 +451,6 @@ def parse_arguments(args: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--match_by_years", type=int, default=0)
     parser.add_argument("--match_by_days", type=int, default=0)
     parser.add_argument("--min_dataset_size", type=int, default=100)
-    parser.add_argument("--pairs_first", action="store_true", default=False)
     parser.add_argument("--shuffle", action="store_true", default=False)
     # 0: discard all first-of-month dates. 1: discard January 1st only. 2: discard none.
     parser.add_argument("--keep_first_days", type=int, default=0)
@@ -477,11 +474,17 @@ def log_arguments(args):
     sys.stdout.flush()
 
 
+def shuffle_year_and_day(dates: np.ndarray) -> np.ndarray:
+    years = (dates / DAYS_IN_YEAR).astype(np.int32)
+    fractions = dates - (years * DAYS_IN_YEAR)
+    shuffle(fractions)
+    return years * DAYS_IN_YEAR + fractions
+
+
 def main():
     args = parse_arguments()
     paths, dates = get_paths_and_dates(args)
-    for delta1 in range(1, len(paths)):
-        delta = 3 - delta1 if args.pairs_first and delta1 < 3 else delta1
+    for delta in range(0, len(paths)):
         for i, path1 in enumerate(paths):
             if i + delta >= len(paths):
                 break
@@ -489,7 +492,11 @@ def main():
             if sizes_are_ok(len(dates[path1]), len(dates[path2]), args):
                 identifier = f"{i},{i + delta}"
                 print(f"# Comparison {identifier} = {path1}({len(dates[path1])}) {path2}({len(dates[path2])})")
-                comp = Comparison(args, dates[path1], dates[path2], identifier)
+                if delta == 0:
+                    dates2 = shuffle_year_and_day(dates[path1])
+                else:
+                    dates2 = dates[path2]
+                comp = Comparison(args, dates[path1], dates2, identifier)
                 comp.run()
 
 
