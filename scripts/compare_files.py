@@ -175,14 +175,14 @@ class Comparison:
             buckets1 = self.year_buckets(self.dates1)
             buckets2 = self.year_buckets(self.dates2)
             self.dates1, self.dates2 = self.apply_buckets(buckets1, buckets2, len1, len2)
-            print(f"# With  year bucket size = {self.args.match_by_years:2d}, "
+            print(f"# With year bucket size = {self.args.match_by_years:2d}, "
                   f"reduced counts from {len1:6d} and {len2:6d} to {len(self.dates1):6d} and {len(self.dates2):6d}")
         if self.args.match_by_days > 0:
             len1, len2 = len(self.dates1), len(self.dates2)
             buckets1 = self.day_buckets(self.dates1)
             buckets2 = self.day_buckets(self.dates2)
             self.dates1, self.dates2 = self.apply_buckets(buckets1, buckets2, len1, len2)
-            print(f"# With month bucket size = {self.args.match_by_days:2d}, " 
+            print(f"# With  day bucket size = {self.args.match_by_days:2d}, " 
                   f"reduced counts from {len1:6d} and {len2:6d} to {len(self.dates1):6d} and {len(self.dates2):6d}")
 
     @staticmethod
